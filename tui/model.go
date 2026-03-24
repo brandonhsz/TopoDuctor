@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -13,6 +14,16 @@ const cardOuterW = 26
 
 // gridColGap is horizontal space between cards in the same row.
 const gridColGap = 2
+
+// Visible rune limits inside a card (must match renderWTCard).
+const cardNameMaxRunes  = 20
+const cardBranchMaxRunes = 18
+
+// marqueeTickInterval controls how fast the selected card scrolls long text.
+const marqueeTickInterval = 200 * time.Millisecond
+
+// marqueeTickMsg drives horizontal scrolling for truncated text on the selected card.
+type marqueeTickMsg struct{}
 
 // Styles defines the lipgloss styles used in the TUI.
 type Styles struct {
@@ -128,6 +139,7 @@ type Model struct {
 	quitting         bool
 	termW            int
 	termH            int
+	marqueeTick      int
 }
 
 // New returns a Model that loads worktrees from workDir (use os.Getwd() from main).
@@ -154,7 +166,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.termW = msg.Width
 		m.termH = msg.Height
-		return m, nil
+		m.marqueeTick = 0
+		return m, m.marqueeCmd()
 
 	case loadDoneMsg:
 		m.loading = false
@@ -164,7 +177,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.worktrees = msg.worktrees
 		m.cursor = clampCursor(m.cursor, m.worktrees)
-		return m, nil
+		m.marqueeTick = 0
+		return m, m.marqueeCmd()
 
 	case refreshDoneMsg:
 		m.busy = false
@@ -177,7 +191,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cursor = clampCursor(m.cursor, m.worktrees)
 		m.mode = modeList
 		syncSelectedPath(&m)
-		return m, nil
+		m.marqueeTick = 0
+		return m, m.marqueeCmd()
+
+	case marqueeTickMsg:
+		if m.mode != modeList || m.quitting || len(m.worktrees) == 0 {
+			return m, nil
+		}
+		if !m.selectedNeedsMarquee() {
+			return m, nil
+		}
+		m.marqueeTick++
+		return m, m.marqueeCmd()
 
 	case tea.KeyMsg:
 		if m.loading || m.loadErr != "" {
@@ -199,7 +224,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "esc":
 				m.mode = modeList
 				m.renameFromPath = ""
-				return m, nil
+				m.marqueeTick = 0
+				return m, m.marqueeCmd()
 			case "enter":
 				v := strings.TrimSpace(m.nameInput.Value())
 				if v == "" {
@@ -223,7 +249,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "n", "esc":
 				m.mode = modeList
 				m.deleteTargetPath = ""
-				return m, nil
+				m.marqueeTick = 0
+				return m, m.marqueeCmd()
 			case "y", "enter":
 				p := m.deleteTargetPath
 				m.deleteTargetPath = ""
@@ -270,17 +297,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.deleteTargetPath = m.worktrees[m.cursor].Path
 			return m, nil
 		case "up", "k":
+			prev := m.cursor
 			m = m.withGridCursor(0, -1)
+			if m.cursor != prev {
+				m.marqueeTick = 0
+			}
+			return m, m.marqueeCmd()
 		case "down", "j":
+			prev := m.cursor
 			m = m.withGridCursor(0, 1)
+			if m.cursor != prev {
+				m.marqueeTick = 0
+			}
+			return m, m.marqueeCmd()
 		case "left", "h":
+			prev := m.cursor
 			m = m.withGridCursor(-1, 0)
+			if m.cursor != prev {
+				m.marqueeTick = 0
+			}
+			return m, m.marqueeCmd()
 		case "right", "l":
+			prev := m.cursor
 			m = m.withGridCursor(1, 0)
+			if m.cursor != prev {
+				m.marqueeTick = 0
+			}
+			return m, m.marqueeCmd()
 		case "enter":
 			if len(m.worktrees) > 0 && m.cursor < len(m.worktrees) {
 				m.SelectedPath = m.worktrees[m.cursor].Path
 			}
+			return m, m.marqueeCmd()
 		}
 	}
 
@@ -351,6 +399,79 @@ func truncateRunes(s string, max int) string {
 	return string(r[:max-1]) + "…"
 }
 
+func runeLen(s string) int {
+	return len([]rune(s))
+}
+
+func truncates(s string, max int) bool {
+	return runeLen(s) > max
+}
+
+// marqueeWindow shows a sliding window of width runes over s (looping with small gaps).
+func marqueeWindow(s string, width int, phase int) string {
+	r := []rune(s)
+	if len(r) <= width {
+		return s
+	}
+	if width < 1 {
+		return ""
+	}
+	gap := []rune("  ")
+	loop := make([]rune, 0, len(gap)+len(r)+len(gap))
+	loop = append(loop, gap...)
+	loop = append(loop, r...)
+	loop = append(loop, gap...)
+	period := len(loop)
+	double := make([]rune, period*2)
+	copy(double, loop)
+	copy(double[period:], loop)
+	shift := phase % period
+	return string(double[shift : shift+width])
+}
+
+func (m Model) branchLabel(wt Worktree) string {
+	if wt.Branch == "" {
+		return "detached"
+	}
+	return wt.Branch
+}
+
+func (m Model) selectedNeedsMarquee() bool {
+	if m.cursor < 0 || m.cursor >= len(m.worktrees) {
+		return false
+	}
+	wt := m.worktrees[m.cursor]
+	br := m.branchLabel(wt)
+	return truncates(wt.Name, cardNameMaxRunes) || truncates(br, cardBranchMaxRunes)
+}
+
+func (m Model) marqueeCmd() tea.Cmd {
+	if m.mode != modeList || m.quitting || len(m.worktrees) == 0 {
+		return nil
+	}
+	if !m.selectedNeedsMarquee() {
+		return nil
+	}
+	return tea.Tick(marqueeTickInterval, func(time.Time) tea.Msg {
+		return marqueeTickMsg{}
+	})
+}
+
+func (m Model) cardNameText(wt Worktree, selected bool) string {
+	if !selected || !truncates(wt.Name, cardNameMaxRunes) {
+		return truncateRunes(wt.Name, cardNameMaxRunes)
+	}
+	return marqueeWindow(wt.Name, cardNameMaxRunes, m.marqueeTick)
+}
+
+func (m Model) cardBranchText(wt Worktree, selected bool) string {
+	br := m.branchLabel(wt)
+	if !selected || !truncates(br, cardBranchMaxRunes) {
+		return truncateRunes(br, cardBranchMaxRunes)
+	}
+	return marqueeWindow(br, cardBranchMaxRunes, m.marqueeTick)
+}
+
 func joinRowTop(cells []string) string {
 	if len(cells) == 0 {
 		return ""
@@ -364,12 +485,8 @@ func joinRowTop(cells []string) string {
 }
 
 func (m Model) renderWTCard(wt Worktree, selected bool) string {
-	branch := wt.Branch
-	if branch == "" {
-		branch = "detached"
-	}
-	name := truncateRunes(wt.Name, 20)
-	br := truncateRunes(branch, 18)
+	name := m.cardNameText(wt, selected)
+	br := m.cardBranchText(wt, selected)
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CDD6F4")).Render(name)
 	sub := m.styles.Muted.Render("↳ " + br)
 	inner := lipgloss.JoinVertical(lipgloss.Left, title, sub)
