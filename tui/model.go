@@ -1,13 +1,18 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// cardOuterW is the lipgloss block width of one worktree card (border + content).
+const cardOuterW = 26
+
+// gridColGap is horizontal space between cards in the same row.
+const gridColGap = 2
 
 // Styles defines the lipgloss styles used in the TUI.
 type Styles struct {
@@ -19,6 +24,8 @@ type Styles struct {
 	Error        lipgloss.Style
 	Muted        lipgloss.Style
 	Border       lipgloss.Style
+	Card         lipgloss.Style
+	CardSelected lipgloss.Style
 	Prompt       lipgloss.Style
 }
 
@@ -66,6 +73,18 @@ func defaultStyles() Styles {
 			BorderForeground(lipgloss.Color("#45475A")).
 			Padding(1, 2).
 			Width(56),
+
+		Card: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#45475A")).
+			Padding(0, 1).
+			Width(26),
+
+		CardSelected: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#CBA6F7")).
+			Padding(0, 1).
+			Width(26),
 
 		Prompt: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#89B4FA")).
@@ -251,13 +270,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.deleteTargetPath = m.worktrees[m.cursor].Path
 			return m, nil
 		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
+			m = m.withGridCursor(0, -1)
 		case "down", "j":
-			if len(m.worktrees) > 0 && m.cursor < len(m.worktrees)-1 {
-				m.cursor++
-			}
+			m = m.withGridCursor(0, 1)
+		case "left", "h":
+			m = m.withGridCursor(-1, 0)
+		case "right", "l":
+			m = m.withGridCursor(1, 0)
 		case "enter":
 			if len(m.worktrees) > 0 && m.cursor < len(m.worktrees) {
 				m.SelectedPath = m.worktrees[m.cursor].Path
@@ -266,6 +285,133 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// gridCols is how many cards fit per row from terminal width (used for layout and movement).
+func (m Model) gridCols() int {
+	tw := m.termW
+	if tw < 1 {
+		tw = 80
+	}
+	// Leave margin for centering padding inside Place().
+	usable := tw - 12
+	if usable < cardOuterW {
+		return 1
+	}
+	c := usable / (cardOuterW + gridColGap)
+	if c < 1 {
+		return 1
+	}
+	if c > 6 {
+		return 6
+	}
+	return c
+}
+
+// withGridCursor moves the selection on a row-major grid (arrows / hjkl).
+func (m Model) withGridCursor(dx, dy int) Model {
+	n := len(m.worktrees)
+	if n == 0 {
+		return m
+	}
+	cols := m.gridCols()
+	if cols < 1 {
+		cols = 1
+	}
+	row := m.cursor / cols
+	col := m.cursor % cols
+
+	switch {
+	case dx < 0 && col > 0:
+		m.cursor--
+	case dx > 0 && col < cols-1 && m.cursor+1 < n:
+		m.cursor++
+	case dy < 0 && row > 0:
+		m.cursor -= cols
+		if m.cursor < 0 {
+			m.cursor = 0
+		}
+	case dy > 0:
+		next := m.cursor + cols
+		if next < n {
+			m.cursor = next
+		}
+	}
+	return m
+}
+
+func truncateRunes(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	if max <= 1 {
+		return "…"
+	}
+	return string(r[:max-1]) + "…"
+}
+
+func joinRowTop(cells []string) string {
+	if len(cells) == 0 {
+		return ""
+	}
+	acc := cells[0]
+	gap := lipgloss.NewStyle().Width(gridColGap).Render("")
+	for i := 1; i < len(cells); i++ {
+		acc = lipgloss.JoinHorizontal(lipgloss.Top, acc, gap, cells[i])
+	}
+	return acc
+}
+
+func (m Model) renderWTCard(wt Worktree, selected bool) string {
+	branch := wt.Branch
+	if branch == "" {
+		branch = "detached"
+	}
+	name := truncateRunes(wt.Name, 20)
+	br := truncateRunes(branch, 18)
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CDD6F4")).Render(name)
+	sub := m.styles.Muted.Render("↳ " + br)
+	inner := lipgloss.JoinVertical(lipgloss.Left, title, sub)
+	inner = lipgloss.NewStyle().Width(22).Render(inner)
+
+	var frame lipgloss.Style
+	if selected {
+		frame = m.styles.CardSelected
+	} else {
+		frame = m.styles.Card
+	}
+	return frame.Render(inner)
+}
+
+func (m Model) renderWorktreeGrid() string {
+	wts := m.worktrees
+	if len(wts) == 0 {
+		return m.styles.Border.Render(m.styles.Muted.Render("  (sin worktrees)"))
+	}
+	cols := m.gridCols()
+	var rows []string
+	for start := 0; start < len(wts); start += cols {
+		var cells []string
+		for c := 0; c < cols; c++ {
+			idx := start + c
+			if idx >= len(wts) {
+				placeholder := lipgloss.NewStyle().Width(cardOuterW).Render("")
+				cells = append(cells, placeholder)
+				continue
+			}
+			cells = append(cells, m.renderWTCard(wts[idx], idx == m.cursor && m.mode == modeList))
+		}
+		rows = append(rows, joinRowTop(cells))
+	}
+	return strings.Join(rows, "\n")
+}
+
+func gridTotalWidth(cols int) int {
+	if cols < 1 {
+		return cardOuterW
+	}
+	return cols*cardOuterW + (cols-1)*gridColGap
 }
 
 func clampCursor(c int, wts []Worktree) int {
@@ -331,21 +477,23 @@ func (m Model) centerInTerminal(block string) string {
 func (m Model) renderPanel() string {
 	var sb strings.Builder
 
-	header := m.styles.Header.Render("  Git Worktree Orchestrator")
+	cols := m.gridCols()
+	panelW := gridTotalWidth(cols)
+	header := m.styles.Header.Width(panelW).Render("Git Worktree Orchestrator")
 	sb.WriteString(header)
 	sb.WriteString("\n\n")
 
 	if m.loading {
 		sb.WriteString(m.styles.Message.Render("Cargando worktrees…"))
 		sb.WriteString("\n\n")
-		sb.WriteString(m.styles.StatusBar.Render("q salir"))
+		sb.WriteString(m.styles.StatusBar.Width(panelW).Render("q salir"))
 		return sb.String()
 	}
 
 	if m.loadErr != "" {
-		sb.WriteString(m.styles.Error.Render(m.loadErr))
+		sb.WriteString(m.styles.Error.Width(panelW - 4).Render(m.loadErr))
 		sb.WriteString("\n\n")
-		sb.WriteString(m.styles.StatusBar.Render("q salir"))
+		sb.WriteString(m.styles.StatusBar.Width(panelW).Render("q salir"))
 		return sb.String()
 	}
 
@@ -354,29 +502,7 @@ func (m Model) renderPanel() string {
 		sb.WriteString("\n\n")
 	}
 
-	var listItems []string
-	if len(m.worktrees) == 0 {
-		listItems = append(listItems, m.styles.Muted.Render("  (sin worktrees)"))
-	}
-	for i, wt := range m.worktrees {
-		cursor := "  "
-		if i == m.cursor && m.mode == modeList {
-			cursor = "▶ "
-		}
-		branch := wt.Branch
-		if branch == "" {
-			branch = "detached"
-		}
-		line := fmt.Sprintf("%s%s (%s)", cursor, wt.Name, branch)
-		if i == m.cursor && m.mode == modeList {
-			listItems = append(listItems, m.styles.SelectedItem.Render(line))
-		} else {
-			listItems = append(listItems, m.styles.NormalItem.Render(line))
-		}
-	}
-
-	listContent := strings.Join(listItems, "\n")
-	sb.WriteString(m.styles.Border.Render(listContent))
+	sb.WriteString(m.renderWorktreeGrid())
 	sb.WriteString("\n")
 
 	switch m.mode {
@@ -424,8 +550,8 @@ func (m Model) renderPanel() string {
 		sb.WriteString("\n")
 	}
 
-	hints := "↑/k ↓/j · enter elegir cd · n nuevo · r renombrar · d borrar · q salir"
-	sb.WriteString(m.styles.StatusBar.Render(hints))
+	hints := "↑↓←→ / hjkl · enter cd · n · r · d · q salir"
+	sb.WriteString(m.styles.StatusBar.Width(panelW).Render(hints))
 
 	return sb.String()
 }
