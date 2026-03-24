@@ -326,7 +326,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.marqueeCmd()
 		case "enter":
 			if len(m.worktrees) > 0 && m.cursor < len(m.worktrees) {
-				m.SelectedPath = m.worktrees[m.cursor].Path
+				path := m.worktrees[m.cursor].Path
+				if m.SelectedPath == path {
+					m.SelectedPath = ""
+				} else {
+					m.SelectedPath = path
+				}
 			}
 			return m, m.marqueeCmd()
 		}
@@ -667,7 +672,7 @@ func (m Model) renderPanel() string {
 		sb.WriteString("\n")
 	}
 
-	hints := "↑↓←→ / hjkl · enter cd · n · r · d · q salir"
+	hints := "↑↓←→ / hjkl · enter cd / otra vez quita · n · r · d · q salir"
 	sb.WriteString(m.styles.StatusBar.Width(panelW).Render(hints))
 
 	return sb.String()
