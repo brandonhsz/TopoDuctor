@@ -2,12 +2,14 @@
 
 ## Propósito
 
-Herramienta en terminal (TUI) para **gestionar git worktrees con poca fricción**: listar worktrees, **crear uno en el primer arranque si hace falta**, y **cambiar de contexto** (moverse entre directorios de trabajo asociados a cada worktree).
+Herramienta en terminal (TUI) para **gestionar git worktrees con poca fricción**: listar, crear (**n**), renombrar carpeta (**r**), eliminar (**d**), y **cambiar de contexto** (cd al worktree elegido al salir).
 
 Comportamiento implementado:
 
-- **Primera ejecución (por repo)**: si no existe aún el worktree “gestionado”, se crea uno hermano del toplevel con nombre `<repo>-wt-<uuid>` y rama `wt-<uuid>`. El estado se guarda en `<git-common-dir>/worktree-orchestrator.json` para no duplicar worktrees.
-- **Uso habitual**: lista todos los worktrees (`git worktree list --porcelain`), navegación con j/k, **Enter** fija la ruta elegida; al salir, si hubo selección, se imprime `cd "<path>"` en stdout para copiar o evaluar en la shell.
+- **Al abrir**: solo lista worktrees existentes (`git worktree list --porcelain`); no se crea ninguno automáticamente.
+- **Crear**: atajo **n** y nombre deseado (carpeta `<repo>-<nombre>` y rama con el mismo slug).
+- **Salida con selección**: por defecto `Chdir` + `exec` del `$SHELL` en esa ruta; con `-print-only` solo se imprime `cd "…"` en stdout.
+- **Estado opcional**: `worktree-orchestrator.json` en el git dir común solo se usa para sincronizar la ruta “gestionada” si existía en versiones anteriores (mover/borrar); ya no se rellena al arrancar.
 
 ## Stack
 
@@ -22,8 +24,8 @@ Módulo: `github.com/macpro/git-worktree-orchestrator`.
 
 | Ruta | Rol |
 |------|-----|
-| `main.go` | Punto de entrada: `Getwd`, programa Bubble Tea, imprime `cd` en stdout si hubo selección. |
-| `internal/gitworktree/` | Encapsula `git`: bootstrap del worktree UUID, listado porcelain, estado en el git dir común. |
+| `main.go` | Punto de entrada: `Getwd`, TUI; tras elegir ruta, `exec` del shell o `-print-only`. |
+| `internal/gitworktree/` | Encapsula `git`: listado porcelain, add/move/remove, estado opcional en el git dir común. |
 | `tui/model.go` | Modelo Bubble Tea: carga async, lista, errores, vista. |
 | `tui/load.go` | Comando inicial que llama al paquete gitworktree. |
 | `tui/keys.go` | Definición de atajos (arriba/abajo, seleccionar, salir). |
@@ -34,8 +36,6 @@ Módulo: `github.com/macpro/git-worktree-orchestrator`.
 - **Errores de Git** (no es repo, comando fallido): mostrar mensaje claro en la TUI o en stderr según el patrón que elija el proyecto; no silenciar fallos.
 - El tipo `Worktree` en `tui/model.go` debe alinearse con lo que devuelva la integración real (`Name`, `Branch`, y campos extra si hacen falta para “moverse” al worktree).
 - Respetar el estilo existente: comentarios en inglés donde ya lo estén, nombres exportados con sentido, sin refactors masivos fuera del alcance del cambio.
-- Tras añadir lógica de “primer arranque”, considerar **persistencia mínima** (por ejemplo, marcar en un archivo de estado o detectar por `git worktree list`) para no crear worktrees duplicados en cada ejecución.
-
 ## Cómo ejecutar
 
 ```bash
@@ -55,5 +55,5 @@ Cuando existan tests, ejecutar `go test ./...`. Si aún no hay tests, priorizar 
 ## Resumen para el modelo
 
 1. El objetivo del producto es **orquestar worktrees y facilitar el cambio de contexto entre ellos**.
-2. **Primera corrida**: crear worktree con nombre basado en **UUID** si corresponde a la lógica de onboarding.
+2. **No hay creación automática al abrir**; el usuario crea worktrees con **n** cuando lo necesite.
 3. El código vivo está en Go + Bubble Tea bajo `tui/` y `main.go`.

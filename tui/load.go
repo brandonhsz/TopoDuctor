@@ -14,9 +14,6 @@ type loadDoneMsg struct {
 func loadWorktrees(dir string) tea.Cmd {
 	return func() tea.Msg {
 		r := gitworktree.Runner{Dir: dir}
-		if err := r.EnsureManagedWorktree(); err != nil {
-			return loadDoneMsg{err: err}
-		}
 		gw, err := r.List()
 		if err != nil {
 			return loadDoneMsg{err: err}

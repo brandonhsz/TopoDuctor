@@ -2,7 +2,6 @@ package gitworktree
 
 import (
 	"bytes"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -58,67 +57,6 @@ func (r Runner) listWith(git GitCommandRunner) ([]Worktree, error) {
 		return nil, fmt.Errorf("git worktree list: %w", err)
 	}
 	return parsePorcelain(string(out))
-}
-
-// EnsureManagedWorktree creates a sibling worktree with a UUID-based name on first use,
-// or refreshes state if the recorded path was removed. Idempotent when the path still exists.
-func (r Runner) EnsureManagedWorktree() error {
-	return r.ensureWith(execRunner{})
-}
-
-func (r Runner) ensureWith(git GitCommandRunner) error {
-	if err := r.assertInsideRepo(git); err != nil {
-		return err
-	}
-	top, err := r.absGitOutput(git, "rev-parse", "--show-toplevel")
-	if err != nil {
-		return fmt.Errorf("git root: %w", err)
-	}
-	commonGit, err := r.absGitOutput(git, "rev-parse", "--git-common-dir")
-	if err != nil {
-		return fmt.Errorf("git common dir: %w", err)
-	}
-	commonGit, err = filepath.Abs(commonGit)
-	if err != nil {
-		return err
-	}
-
-	statePath := filepath.Join(commonGit, "worktree-orchestrator.json")
-	state, _ := readState(statePath)
-
-	list, err := r.listWith(git)
-	if err != nil {
-		return err
-	}
-	byPath := make(map[string]Worktree, len(list))
-	for _, w := range list {
-		byPath[w.Path] = w
-	}
-
-	if state.ManagedWorktreePath != "" {
-		if _, ok := byPath[state.ManagedWorktreePath]; ok {
-			return nil
-		}
-	}
-
-	uuid, err := randomUUID()
-	if err != nil {
-		return err
-	}
-	base := filepath.Base(top)
-	parent := filepath.Dir(top)
-	newPath := filepath.Join(parent, fmt.Sprintf("%s-wt-%s", base, uuid))
-	branch := fmt.Sprintf("wt-%s", uuid)
-
-	if err := r.addWorktree(git, top, newPath, branch); err != nil {
-		return err
-	}
-
-	state.ManagedWorktreePath = newPath
-	if err := writeState(statePath, state); err != nil {
-		return fmt.Errorf("save orchestrator state: %w", err)
-	}
-	return nil
 }
 
 func (r Runner) addWorktree(git GitCommandRunner, top, newPath, branch string) error {
@@ -238,21 +176,3 @@ func branchShortName(ref string) string {
 	}
 	return ref
 }
-
-func randomUUID() (string, error) {
-	var b [16]byte
-	if _, err := cryptoRandRead(b[:]); err != nil {
-		return "", err
-	}
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
-		uint32(b[0])<<24|uint32(b[1])<<16|uint32(b[2])<<8|uint32(b[3]),
-		uint16(b[4])<<8|uint16(b[5]),
-		uint16(b[6])<<8|uint16(b[7]),
-		uint16(b[8])<<8|uint16(b[9]),
-		b[10:16]), nil
-}
-
-// cryptoRandRead is swappable in tests.
-var cryptoRandRead = rand.Read
