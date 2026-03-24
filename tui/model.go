@@ -107,6 +107,8 @@ type Model struct {
 	keys             KeyMap
 	styles           Styles
 	quitting         bool
+	termW            int
+	termH            int
 }
 
 // New returns a Model that loads worktrees from workDir (use os.Getwd() from main).
@@ -130,6 +132,11 @@ func (m Model) Init() tea.Cmd {
 // Update implements tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.termW = msg.Width
+		m.termH = msg.Height
+		return m, nil
+
 	case loadDoneMsg:
 		m.loading = false
 		if msg.err != nil {
@@ -300,7 +307,28 @@ func (m Model) View() string {
 	if m.quitting {
 		return ""
 	}
+	return m.centerInTerminal(m.renderPanel())
+}
 
+func (m Model) centerInTerminal(block string) string {
+	w, h := m.termW, m.termH
+	if w < 1 {
+		w = 80
+	}
+	if h < 1 {
+		h = 24
+	}
+	bg := lipgloss.Color("#1E1E2E")
+	return lipgloss.Place(
+		w, h,
+		lipgloss.Center, lipgloss.Center,
+		block,
+		lipgloss.WithWhitespaceChars(" "),
+		lipgloss.WithWhitespaceBackground(bg),
+	)
+}
+
+func (m Model) renderPanel() string {
 	var sb strings.Builder
 
 	header := m.styles.Header.Render("  Git Worktree Orchestrator")
