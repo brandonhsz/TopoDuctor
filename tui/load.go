@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"path/filepath"
-
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/macpro/git-worktree-orchestrator/internal/gitworktree"
 )
@@ -23,14 +21,6 @@ func loadWorktrees(dir string) tea.Cmd {
 		if err != nil {
 			return loadDoneMsg{err: err}
 		}
-		out := make([]Worktree, len(gw))
-		for i := range gw {
-			out[i] = Worktree{
-				Name:   filepath.Base(gw[i].Path),
-				Branch: gw[i].Branch,
-				Path:   gw[i].Path,
-			}
-		}
-		return loadDoneMsg{worktrees: out}
+		return loadDoneMsg{worktrees: toTUIWorktrees(gw)}
 	}
 }
