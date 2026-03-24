@@ -2,22 +2,21 @@ package tui
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/macpro/git-worktree-orchestrator/internal/gitworktree"
+	"github.com/macpro/git-worktree-orchestrator/internal/worktree"
 )
 
-// loadDoneMsg carries the result of the initial git load.
+// loadDoneMsg carries the result of the initial load.
 type loadDoneMsg struct {
-	worktrees []Worktree
+	worktrees []worktree.Worktree
 	err       error
 }
 
-func loadWorktrees(dir string) tea.Cmd {
+func loadWorktrees(svc worktree.Service) tea.Cmd {
 	return func() tea.Msg {
-		r := gitworktree.Runner{Dir: dir}
-		gw, err := r.List()
+		gw, err := svc.List()
 		if err != nil {
 			return loadDoneMsg{err: err}
 		}
-		return loadDoneMsg{worktrees: toTUIWorktrees(gw)}
+		return loadDoneMsg{worktrees: gw}
 	}
 }

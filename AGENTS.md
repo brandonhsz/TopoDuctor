@@ -20,22 +20,31 @@ Comportamiento implementado:
 
 Módulo: `github.com/macpro/git-worktree-orchestrator`.
 
+## Arquitectura (vertical slice + puertos)
+
+- **Slice vertical** `internal/worktree/`: dominio del orquestador (`Worktree`) y **puerto** `Service` (listar / crear / mover / borrar). La TUI y `main` solo dependen de este contrato.
+- **Adaptador** `internal/worktree/git/`: implementa `worktree.Service` con el CLI de git (`Runner`, porcelain, estado JSON). Sustituible por tests o otro backend (mock que implemente `worktree.Service`).
+- **`tui/`**: driver Bubble Tea; recibe `worktree.Service` inyectado en `tui.New(svc, workDir, printOnly)` — sin imports de `git` ni `exec`.
+- **`main.go`**: cablea `wtgit.NewService(wd)` → `tui.New`.
+
 ## Estructura del repo
 
 | Ruta | Rol |
 |------|-----|
-| `main.go` | Punto de entrada: `Getwd`, TUI; tras elegir ruta, `exec` del shell o `-print-only`. |
-| `internal/gitworktree/` | Encapsula `git`: listado porcelain, add/move/remove, estado opcional en el git dir común. |
-| `tui/model.go` | Modelo Bubble Tea: carga async, lista, errores, vista. |
-| `tui/load.go` | Comando inicial que llama al paquete gitworktree. |
-| `tui/keys.go` | Definición de atajos (arriba/abajo, seleccionar, salir). |
+| `main.go` | `Getwd`, `wire` git adapter + TUI; `exec` shell o `-print-only`. |
+| `internal/worktree/` | Dominio `Worktree`, interfaz `Service` (puerto). |
+| `internal/worktree/git/` | Adaptador git: `Runner`, `Adapter`, parse porcelain, ops, tests. |
+| `tui/model.go` | Modelo Bubble Tea: carga, grid, marquee, modos. |
+| `tui/load.go` | `tea.Cmd` que llama `svc.List()`. |
+| `tui/op.go` | Comandos async post mutación (add/move/remove). |
+| `tui/keys.go` | Atajos de teclado. |
 
 ## Convenciones al implementar
 
-- Mantener la TUI **acoplada de forma delgada** a Git: idealmente encapsular `git worktree` (listar, agregar, etc.) en un paquete o funciones dedicadas y dejar `tui` como capa de presentación y mensajes.
-- **Errores de Git** (no es repo, comando fallido): mostrar mensaje claro en la TUI o en stderr según el patrón que elija el proyecto; no silenciar fallos.
-- El tipo `Worktree` en `tui/model.go` debe alinearse con lo que devuelva la integración real (`Name`, `Branch`, y campos extra si hacen falta para “moverse” al worktree).
-- Respetar el estilo existente: comentarios en inglés donde ya lo estén, nombres exportados con sentido, sin refactors masivos fuera del alcance del cambio.
+- **Nuevas operaciones sobre worktrees**: añadir método al puerto `worktree.Service`, implementar en `internal/worktree/git`, usar desde `tui/op.go` o `load.go`.
+- **Errores de Git**: propagar al mensaje de la TUI o stderr; no silenciar.
+- **Dominio**: `worktree.Worktree` usa `Path`, `Branch`, `Head`; en la UI el “nombre” de carpeta es `filepath.Base(Path)`.
+- Respetar estilo existente; comentarios en inglés en código donde ya aplique.
 ## Cómo ejecutar
 
 ```bash

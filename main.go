@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
+	wtgit "github.com/macpro/git-worktree-orchestrator/internal/worktree/git"
 	"github.com/macpro/git-worktree-orchestrator/tui"
 )
 
@@ -24,7 +25,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	model := tui.New(wd, *printOnly)
+	svc := wtgit.NewService(wd)
+	model := tui.New(svc, wd, *printOnly)
 
 	p := tea.NewProgram(model, tea.WithAltScreen())
 

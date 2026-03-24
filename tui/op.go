@@ -1,79 +1,61 @@
 package tui
 
 import (
-	"path/filepath"
-
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/macpro/git-worktree-orchestrator/internal/gitworktree"
+	"github.com/macpro/git-worktree-orchestrator/internal/worktree"
 )
 
 // refreshDoneMsg follows a list reload (after create / rename / remove).
 type refreshDoneMsg struct {
-	worktrees []Worktree
+	worktrees []worktree.Worktree
 	err       error
 }
 
-func toTUIWorktrees(gw []gitworktree.Worktree) []Worktree {
-	out := make([]Worktree, len(gw))
-	for i := range gw {
-		out[i] = Worktree{
-			Name:   filepath.Base(gw[i].Path),
-			Branch: gw[i].Branch,
-			Path:   gw[i].Path,
-		}
-	}
-	return out
-}
-
-func reloadListCmd(dir string) tea.Cmd {
+func reloadListCmd(svc worktree.Service) tea.Cmd {
 	return func() tea.Msg {
-		r := gitworktree.Runner{Dir: dir}
-		gw, err := r.List()
+		gw, err := svc.List()
 		if err != nil {
 			return refreshDoneMsg{err: err}
 		}
-		return refreshDoneMsg{worktrees: toTUIWorktrees(gw)}
+		return refreshDoneMsg{worktrees: gw}
 	}
 }
 
-func addWorktreeCmd(dir, label string) tea.Cmd {
+func addWorktreeCmd(svc worktree.Service, label string) tea.Cmd {
 	return func() tea.Msg {
-		r := gitworktree.Runner{Dir: dir}
-		if err := r.AddUserWorktree(label); err != nil {
+		if err := svc.AddUserWorktree(label); err != nil {
 			return refreshDoneMsg{err: err}
 		}
-		gw, err := r.List()
+		gw, err := svc.List()
 		if err != nil {
 			return refreshDoneMsg{err: err}
 		}
-		return refreshDoneMsg{worktrees: toTUIWorktrees(gw)}
+		return refreshDoneMsg{worktrees: gw}
 	}
 }
 
-func moveWorktreeCmd(dir, oldPath, newBasename string) tea.Cmd {
+func moveWorktreeCmd(svc worktree.Service, oldPath, newBasename string) tea.Cmd {
 	return func() tea.Msg {
-		r := gitworktree.Runner{Dir: dir}
-		if err := r.MoveWorktree(oldPath, newBasename); err != nil {
+		if err := svc.MoveWorktree(oldPath, newBasename); err != nil {
 			return refreshDoneMsg{err: err}
 		}
-		gw, err := r.List()
+		gw, err := svc.List()
 		if err != nil {
 			return refreshDoneMsg{err: err}
 		}
-		return refreshDoneMsg{worktrees: toTUIWorktrees(gw)}
+		return refreshDoneMsg{worktrees: gw}
 	}
 }
 
-func removeWorktreeCmd(dir, path string) tea.Cmd {
+func removeWorktreeCmd(svc worktree.Service, path string) tea.Cmd {
 	return func() tea.Msg {
-		r := gitworktree.Runner{Dir: dir}
-		if err := r.RemoveWorktree(path); err != nil {
+		if err := svc.RemoveWorktree(path); err != nil {
 			return refreshDoneMsg{err: err}
 		}
-		gw, err := r.List()
+		gw, err := svc.List()
 		if err != nil {
 			return refreshDoneMsg{err: err}
 		}
-		return refreshDoneMsg{worktrees: toTUIWorktrees(gw)}
+		return refreshDoneMsg{worktrees: gw}
 	}
 }

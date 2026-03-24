@@ -1,4 +1,4 @@
-package gitworktree
+package git
 
 import (
 	"bytes"
@@ -9,16 +9,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/macpro/git-worktree-orchestrator/internal/worktree"
 )
 
-// Worktree is one row from `git worktree list --porcelain`.
-type Worktree struct {
-	Path   string
-	Head   string
-	Branch string // empty when detached
-}
-
-// orchestratorState is persisted under the common git dir.
 type orchestratorState struct {
 	ManagedWorktreePath string `json:"managed_worktree_path"`
 }
@@ -47,11 +41,11 @@ func (execRunner) OutputGit(dir string, args ...string) ([]byte, error) {
 }
 
 // List returns all worktrees using porcelain output.
-func (r Runner) List() ([]Worktree, error) {
+func (r Runner) List() ([]worktree.Worktree, error) {
 	return r.listWith(execRunner{})
 }
 
-func (r Runner) listWith(git GitCommandRunner) ([]Worktree, error) {
+func (r Runner) listWith(git GitCommandRunner) ([]worktree.Worktree, error) {
 	out, err := git.OutputGit(r.Dir, "worktree", "list", "--porcelain")
 	if err != nil {
 		return nil, fmt.Errorf("git worktree list: %w", err)
@@ -111,18 +105,18 @@ func writeState(path string, st orchestratorState) error {
 }
 
 // ParsePorcelain parses `git worktree list --porcelain` output (exported for tests).
-func ParsePorcelain(s string) ([]Worktree, error) {
+func ParsePorcelain(s string) ([]worktree.Worktree, error) {
 	return parsePorcelain(s)
 }
 
-func parsePorcelain(s string) ([]Worktree, error) {
+func parsePorcelain(s string) ([]worktree.Worktree, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return nil, nil
 	}
 	lines := strings.Split(s, "\n")
-	var out []Worktree
-	var cur *Worktree
+	var out []worktree.Worktree
+	var cur *worktree.Worktree
 
 	flush := func() {
 		if cur != nil && cur.Path != "" {
@@ -149,7 +143,7 @@ func parsePorcelain(s string) ([]Worktree, error) {
 		switch key {
 		case "worktree":
 			flush()
-			cur = &Worktree{Path: val}
+			cur = &worktree.Worktree{Path: val}
 		case "HEAD":
 			if cur != nil {
 				cur.Head = val

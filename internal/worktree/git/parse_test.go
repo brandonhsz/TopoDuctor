@@ -1,8 +1,10 @@
-package gitworktree
+package git
 
 import (
 	"reflect"
 	"testing"
+
+	"github.com/macpro/git-worktree-orchestrator/internal/worktree"
 )
 
 func TestParsePorcelain(t *testing.T) {
@@ -23,7 +25,7 @@ detached
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Worktree{
+	want := []worktree.Worktree{
 		{Path: "/home/user/proj", Head: "1111111111111111111111111111111111111111", Branch: "main"},
 		{Path: "/home/user/proj-wt-abc", Head: "2222222222222222222222222222222222222222", Branch: "feature/foo"},
 		{Path: "/tmp/detached", Head: "3333333333333333333333333333333333333333", Branch: ""},

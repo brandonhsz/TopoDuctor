@@ -1,12 +1,14 @@
 package tui
 
 import (
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/macpro/git-worktree-orchestrator/internal/worktree"
 )
 
 // cardOuterW is the lipgloss block width of one worktree card (border + content).
@@ -16,7 +18,7 @@ const cardOuterW = 26
 const gridColGap = 2
 
 // Visible rune limits inside a card (must match renderWTCard).
-const cardNameMaxRunes  = 20
+const cardNameMaxRunes = 20
 const cardBranchMaxRunes = 18
 
 // marqueeTickInterval controls how fast the selected card scrolls long text.
@@ -103,24 +105,9 @@ func defaultStyles() Styles {
 	}
 }
 
-// Worktree represents a git worktree entry.
-type Worktree struct {
-	Name   string
-	Branch string
-	Path   string
-}
-
-type viewMode int
-
-const (
-	modeList viewMode = iota
-	modeCreate
-	modeRename
-	modeDeleteConfirm
-)
-
 // Model is the main bubbletea model for the application.
 type Model struct {
+	svc              worktree.Service
 	workDir          string
 	printOnlyExit    bool
 	loading          bool
@@ -131,7 +118,7 @@ type Model struct {
 	nameInput        textinput.Model
 	renameFromPath   string
 	deleteTargetPath string
-	worktrees        []Worktree
+	worktrees        []worktree.Worktree
 	cursor           int
 	SelectedPath     string
 	keys             KeyMap
@@ -142,10 +129,11 @@ type Model struct {
 	marqueeTick      int
 }
 
-// New returns a Model that loads worktrees from workDir (use os.Getwd() from main).
+// New returns a Model. svc is the worktree port (e.g. git adapter); workDir is cwd for display.
 // If printOnlyExit is true, main will only print cd to stdout instead of chdir+exec shell.
-func New(workDir string, printOnlyExit bool) Model {
+func New(svc worktree.Service, workDir string, printOnlyExit bool) Model {
 	return Model{
+		svc:           svc,
 		workDir:       workDir,
 		printOnlyExit: printOnlyExit,
 		loading:       true,
@@ -157,7 +145,7 @@ func New(workDir string, printOnlyExit bool) Model {
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
-	return loadWorktrees(m.workDir)
+	return loadWorktrees(m.svc)
 }
 
 // Update implements tea.Model.
@@ -236,9 +224,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.renameFromPath != "" {
 					p := m.renameFromPath
 					m.renameFromPath = ""
-					return m, moveWorktreeCmd(m.workDir, p, v)
+					return m, moveWorktreeCmd(m.svc, p, v)
 				}
-				return m, addWorktreeCmd(m.workDir, v)
+				return m, addWorktreeCmd(m.svc, v)
 			}
 			var cmd tea.Cmd
 			m.nameInput, cmd = m.nameInput.Update(msg)
@@ -256,7 +244,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.deleteTargetPath = ""
 				m.mode = modeList
 				m.busy = true
-				return m, removeWorktreeCmd(m.workDir, p)
+				return m, removeWorktreeCmd(m.svc, p)
 			}
 			return m, nil
 		}
@@ -284,7 +272,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			wt := m.worktrees[m.cursor]
 			m.renameFromPath = wt.Path
 			m.nameInput = newNameInput("")
-			m.nameInput.SetValue(wt.Name)
+			m.nameInput.SetValue(filepath.Base(wt.Path))
 			m.nameInput.CursorEnd()
 			return m, m.nameInput.Focus()
 		case "d":
@@ -434,7 +422,7 @@ func marqueeWindow(s string, width int, phase int) string {
 	return string(double[shift : shift+width])
 }
 
-func (m Model) branchLabel(wt Worktree) string {
+func (m Model) branchLabel(wt worktree.Worktree) string {
 	if wt.Branch == "" {
 		return "detached"
 	}
@@ -447,7 +435,8 @@ func (m Model) selectedNeedsMarquee() bool {
 	}
 	wt := m.worktrees[m.cursor]
 	br := m.branchLabel(wt)
-	return truncates(wt.Name, cardNameMaxRunes) || truncates(br, cardBranchMaxRunes)
+	fn := folderName(wt)
+	return truncates(fn, cardNameMaxRunes) || truncates(br, cardBranchMaxRunes)
 }
 
 func (m Model) marqueeCmd() tea.Cmd {
@@ -462,14 +451,19 @@ func (m Model) marqueeCmd() tea.Cmd {
 	})
 }
 
-func (m Model) cardNameText(wt Worktree, selected bool) string {
-	if !selected || !truncates(wt.Name, cardNameMaxRunes) {
-		return truncateRunes(wt.Name, cardNameMaxRunes)
+func (m Model) cardNameText(wt worktree.Worktree, selected bool) string {
+	fn := folderName(wt)
+	if !selected || !truncates(fn, cardNameMaxRunes) {
+		return truncateRunes(fn, cardNameMaxRunes)
 	}
-	return marqueeWindow(wt.Name, cardNameMaxRunes, m.marqueeTick)
+	return marqueeWindow(fn, cardNameMaxRunes, m.marqueeTick)
 }
 
-func (m Model) cardBranchText(wt Worktree, selected bool) string {
+func folderName(w worktree.Worktree) string {
+	return filepath.Base(w.Path)
+}
+
+func (m Model) cardBranchText(wt worktree.Worktree, selected bool) string {
 	br := m.branchLabel(wt)
 	if !selected || !truncates(br, cardBranchMaxRunes) {
 		return truncateRunes(br, cardBranchMaxRunes)
@@ -489,7 +483,7 @@ func joinRowTop(cells []string) string {
 	return acc
 }
 
-func (m Model) renderWTCard(wt Worktree, selected bool) string {
+func (m Model) renderWTCard(wt worktree.Worktree, selected bool) string {
 	name := m.cardNameText(wt, selected)
 	br := m.cardBranchText(wt, selected)
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CDD6F4")).Render(name)
@@ -536,7 +530,7 @@ func gridTotalWidth(cols int) int {
 	return cols*cardOuterW + (cols-1)*gridColGap
 }
 
-func clampCursor(c int, wts []Worktree) int {
+func clampCursor(c int, wts []worktree.Worktree) int {
 	if len(wts) == 0 {
 		return 0
 	}
