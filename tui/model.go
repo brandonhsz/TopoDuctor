@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/macpro/git-worktree-orchestrator/internal/projects"
 	"github.com/macpro/git-worktree-orchestrator/internal/worktree"
 )
 
@@ -107,8 +109,14 @@ func defaultStyles() Styles {
 
 // Model is the main bubbletea model for the application.
 type Model struct {
+	newService       ServiceFactory
+	seedCwd          string
+	configPath       string
+	projectPaths     []string
+	activeProject    string
+	projectCursor    int
+	projPathInput    textinput.Model
 	svc              worktree.Service
-	workDir          string
 	printOnlyExit    bool
 	loading          bool
 	loadErr          string
@@ -129,12 +137,12 @@ type Model struct {
 	marqueeTick      int
 }
 
-// New returns a Model. svc is the worktree port (e.g. git adapter); workDir is cwd for display.
+// New builds a Model. factory creates worktree.Service per repo root; seedCwd seeds the list if empty (when cwd is a git repo).
 // If printOnlyExit is true, main will only print cd to stdout instead of chdir+exec shell.
-func New(svc worktree.Service, workDir string, printOnlyExit bool) Model {
+func New(factory ServiceFactory, seedCwd string, printOnlyExit bool) Model {
 	return Model{
-		svc:           svc,
-		workDir:       workDir,
+		newService:    factory,
+		seedCwd:       seedCwd,
 		printOnlyExit: printOnlyExit,
 		loading:       true,
 		cursor:        0,
@@ -145,7 +153,7 @@ func New(svc worktree.Service, workDir string, printOnlyExit bool) Model {
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
-	return loadWorktrees(m.svc)
+	return loadProjectsBootstrapCmd(m.seedCwd)
 }
 
 // Update implements tea.Model.
@@ -156,6 +164,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.termH = msg.Height
 		m.marqueeTick = 0
 		return m, m.marqueeCmd()
+
+	case projectsLoadedMsg:
+		if msg.err != nil {
+			m.loadErr = msg.err.Error()
+			m.loading = false
+			return m, nil
+		}
+		m.configPath = msg.configPath
+		m.projectPaths = msg.paths
+		m.activeProject = pickActiveProject(msg.paths, msg.active)
+		m.projectCursor = projectIndex(m.activeProject, m.projectPaths)
+		m.svc = nil
+		if m.activeProject != "" {
+			m.svc = m.newService(m.activeProject)
+		}
+		m.SelectedPath = ""
+		return m, loadWorktrees(m.svc)
 
 	case loadDoneMsg:
 		m.loading = false
@@ -207,6 +232,83 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch m.mode {
+		case modeProjectPicker:
+			switch msg.String() {
+			case "esc", "q":
+				m.mode = modeList
+				m.marqueeTick = 0
+				return m, m.marqueeCmd()
+			case "up", "k":
+				if m.projectCursor > 0 {
+					m.projectCursor--
+				}
+				return m, nil
+			case "down", "j":
+				if m.projectCursor < len(m.projectPaths)-1 {
+					m.projectCursor++
+				}
+				return m, nil
+			case "enter":
+				if len(m.projectPaths) == 0 {
+					return m, nil
+				}
+				m.loading = true
+				m.activeProject = m.projectPaths[m.projectCursor]
+				m.svc = m.newService(m.activeProject)
+				m.SelectedPath = ""
+				_ = m.persistProjects()
+				m.mode = modeList
+				m.marqueeTick = 0
+				return m, loadWorktrees(m.svc)
+			case "a":
+				m.mode = modeAddProjectPath
+				m.projPathInput = newProjectPathInput()
+				return m, m.projPathInput.Focus()
+			case "d":
+				if len(m.projectPaths) == 0 {
+					return m, nil
+				}
+				m.banner = ""
+				removed := m.projectPaths[m.projectCursor]
+				m.projectPaths = append(m.projectPaths[:m.projectCursor], m.projectPaths[m.projectCursor+1:]...)
+				if len(m.projectPaths) == 0 {
+					m.activeProject = ""
+					m.projectCursor = 0
+					m.svc = nil
+					m.loading = true
+					m.SelectedPath = ""
+					_ = m.persistProjects()
+					return m, loadWorktrees(nil)
+				}
+				if m.projectCursor >= len(m.projectPaths) {
+					m.projectCursor = len(m.projectPaths) - 1
+				}
+				if m.activeProject == removed {
+					m.activeProject = m.projectPaths[m.projectCursor]
+					m.svc = m.newService(m.activeProject)
+					m.loading = true
+					m.SelectedPath = ""
+					_ = m.persistProjects()
+					return m, loadWorktrees(m.svc)
+				}
+				_ = m.persistProjects()
+				return m, nil
+			}
+			return m, nil
+
+		case modeAddProjectPath:
+			switch msg.String() {
+			case "esc":
+				m.mode = modeProjectPicker
+				m.banner = ""
+				return m, nil
+			case "enter":
+				return m.submitAddProjectPath()
+			}
+			var cmd tea.Cmd
+			m.projPathInput, cmd = m.projPathInput.Update(msg)
+			return m, cmd
+
 		case modeCreate, modeRename:
 			switch msg.String() {
 			case "esc":
@@ -257,7 +359,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q":
 			m.quitting = true
 			return m, tea.Quit
+		case "p":
+			m.mode = modeProjectPicker
+			m.projectCursor = projectIndex(m.activeProject, m.projectPaths)
+			m.banner = ""
+			return m, nil
 		case "n":
+			if m.svc == nil {
+				m.banner = "Añade un proyecto (p → a) antes de crear worktrees."
+				return m, nil
+			}
 			m.banner = ""
 			m.mode = modeCreate
 			m.renameFromPath = ""
@@ -501,6 +612,9 @@ func (m Model) renderWTCard(wt worktree.Worktree, selected bool) string {
 }
 
 func (m Model) renderWorktreeGrid() string {
+	if m.activeProject == "" {
+		return m.styles.Border.Render(m.styles.Muted.Render("  Sin proyecto activo. Pulsa p y luego a para añadir un repositorio."))
+	}
 	wts := m.worktrees
 	if len(wts) == 0 {
 		return m.styles.Border.Render(m.styles.Muted.Render("  (sin worktrees)"))
@@ -521,6 +635,31 @@ func (m Model) renderWorktreeGrid() string {
 		rows = append(rows, joinRowTop(cells))
 	}
 	return strings.Join(rows, "\n")
+}
+
+func (m Model) renderProjectStripWide(panelW int) string {
+	st := m.styles.Muted.Width(panelW)
+	if m.activeProject == "" {
+		return st.Render("Proyecto: —")
+	}
+	max := clampInt(panelW-4, 20, 120)
+	return st.Render("Proyecto: " + truncateRunes(m.activeProject, max))
+}
+
+func (m Model) renderProjectPickerList() string {
+	if len(m.projectPaths) == 0 {
+		return m.styles.Muted.Render("  (ningún proyecto — pulsa a)")
+	}
+	var lines []string
+	for i, p := range m.projectPaths {
+		label := truncateRunes(p, 54)
+		if i == m.projectCursor {
+			lines = append(lines, m.styles.SelectedItem.Render("› "+label))
+		} else {
+			lines = append(lines, m.styles.NormalItem.Render("  "+label))
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func gridTotalWidth(cols int) int {
@@ -564,6 +703,95 @@ func newNameInput(placeholder string) textinput.Model {
 	return ti
 }
 
+func newProjectPathInput() textinput.Model {
+	ti := textinput.New()
+	ti.Placeholder = "ruta absoluta o ~/al/repo"
+	ti.CharLimit = 512
+	ti.Width = 56
+	ti.Focus()
+	return ti
+}
+
+func pickActiveProject(paths []string, active string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	for _, p := range paths {
+		if p == active {
+			return active
+		}
+	}
+	return paths[0]
+}
+
+func projectIndex(active string, paths []string) int {
+	for i, p := range paths {
+		if p == active {
+			return i
+		}
+	}
+	return 0
+}
+
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+func (m Model) submitAddProjectPath() (Model, tea.Cmd) {
+	raw := strings.TrimSpace(m.projPathInput.Value())
+	if raw == "" {
+		return m, nil
+	}
+	if strings.HasPrefix(raw, "~") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			m.banner = err.Error()
+			return m, nil
+		}
+		rest := strings.TrimPrefix(raw, "~")
+		if strings.HasPrefix(rest, "/") || rest == "" {
+			raw = filepath.Join(home, strings.TrimPrefix(rest, "/"))
+		} else {
+			raw = filepath.Join(home, rest)
+		}
+	}
+	abs, err := filepath.Abs(raw)
+	if err != nil {
+		m.banner = err.Error()
+		return m, nil
+	}
+	abs = filepath.Clean(abs)
+	if !projects.IsGitRepo(abs) {
+		m.banner = "No es un repositorio git válido."
+		return m, nil
+	}
+	for _, p := range m.projectPaths {
+		if p == abs {
+			m.banner = "Ese proyecto ya está en la lista."
+			return m, nil
+		}
+	}
+	m.projectPaths = append(m.projectPaths, abs)
+	m.activeProject = abs
+	m.projectCursor = len(m.projectPaths) - 1
+	m.svc = m.newService(abs)
+	m.SelectedPath = ""
+	if err := m.persistProjects(); err != nil {
+		m.banner = err.Error()
+		return m, nil
+	}
+	m.mode = modeProjectPicker
+	m.banner = ""
+	m.loading = true
+	return m, loadWorktrees(m.svc)
+}
+
 // View implements tea.Model.
 func (m Model) View() string {
 	if m.quitting {
@@ -597,6 +825,8 @@ func (m Model) renderPanel() string {
 	panelW := gridTotalWidth(cols)
 	header := m.styles.Header.Width(panelW).Render("Git Worktree Orchestrator")
 	sb.WriteString(header)
+	sb.WriteString("\n")
+	sb.WriteString(m.renderProjectStripWide(panelW))
 	sb.WriteString("\n\n")
 
 	if m.loading {
@@ -646,6 +876,22 @@ func (m Model) renderPanel() string {
 		sb.WriteString("\n")
 		sb.WriteString(m.styles.Muted.Render("y/enter sí · n/esc no"))
 		sb.WriteString("\n")
+	case modeProjectPicker:
+		sb.WriteString("\n")
+		sb.WriteString(m.styles.Prompt.Render("Proyectos (repositorios)"))
+		sb.WriteString("\n")
+		sb.WriteString(m.renderProjectPickerList())
+		sb.WriteString("\n")
+		sb.WriteString(m.styles.Muted.Render("enter activar · a añadir ruta · d quitar · esc volver"))
+		sb.WriteString("\n")
+	case modeAddProjectPath:
+		sb.WriteString("\n")
+		sb.WriteString(m.styles.Prompt.Render("Ruta del repositorio git"))
+		sb.WriteString("\n")
+		sb.WriteString(m.projPathInput.View())
+		sb.WriteString("\n")
+		sb.WriteString(m.styles.Muted.Render("enter añadir · esc cancelar"))
+		sb.WriteString("\n")
 	default:
 		if m.SelectedPath != "" {
 			sb.WriteString(m.styles.Message.Render("cd " + m.SelectedPath))
@@ -666,7 +912,7 @@ func (m Model) renderPanel() string {
 		sb.WriteString("\n")
 	}
 
-	hints := "↑↓←→ / hjkl · enter cd / otra vez quita · n · r · d · q salir"
+	hints := "↑↓←→ / hjkl · enter cd · p proyectos · n · r · d · q salir"
 	sb.WriteString(m.styles.StatusBar.Width(panelW).Render(hints))
 
 	return sb.String()

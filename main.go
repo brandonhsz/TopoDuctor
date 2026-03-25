@@ -25,8 +25,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	svc := wtgit.NewService(wd)
-	model := tui.New(svc, wd, *printOnly)
+	model := tui.New(wtgit.NewService, wd, *printOnly)
 
 	p := tea.NewProgram(model, tea.WithAltScreen())
 

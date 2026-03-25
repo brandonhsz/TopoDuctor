@@ -7,4 +7,6 @@ const (
 	modeCreate
 	modeRename
 	modeDeleteConfirm
+	modeProjectPicker
+	modeAddProjectPath
 )
