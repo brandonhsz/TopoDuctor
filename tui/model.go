@@ -128,6 +128,7 @@ type Model struct {
 	busy             bool
 	banner           string
 	mode             viewMode
+	projectPickerReturn viewMode // modo al salir de proyectos con esc (modeList o modeLobby)
 	createStep       int // 0 = rama base, 1 = branchBase (nombre rama / sufijo carpeta)
 	createBaseRef    string
 	createBranchesLoading bool
@@ -155,17 +156,18 @@ type Model struct {
 	marqueeTick      int
 }
 
-// New builds a Model. factory creates worktree.Service per repo root; seedCwd seeds the list if empty (when cwd is a git repo).
+// New builds a Model. factory creates worktree.Service por repo; seedCwd es el cwd al arrancar (para lobby vs proyecto).
 // If printOnlyExit is true, main will only print cd to stdout instead of chdir+exec shell.
 func New(factory ServiceFactory, seedCwd string, printOnlyExit bool) Model {
 	return Model{
-		newService:    factory,
-		seedCwd:       seedCwd,
-		printOnlyExit: printOnlyExit,
-		loading:       true,
-		cursor:        0,
-		keys:          DefaultKeyMap(),
-		styles:        defaultStyles(),
+		newService:          factory,
+		seedCwd:             seedCwd,
+		printOnlyExit:       printOnlyExit,
+		loading:             true,
+		cursor:              0,
+		projectPickerReturn: modeList,
+		keys:                DefaultKeyMap(),
+		styles:              defaultStyles(),
 	}
 }
 
@@ -192,13 +194,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.configPath = msg.configPath
 		m.projectPaths = msg.paths
 		m.preferredBranchesByPath = msg.preferredBranches
+		m.svc = nil
+		m.SelectedPath = ""
+		if msg.showLobby {
+			m.mode = modeLobby
+			m.loading = false
+			m.activeProject = ""
+			m.projectCursor = 0
+			m.projectPickerReturn = modeLobby
+			return m, nil
+		}
+		m.mode = modeList
 		m.activeProject = pickActiveProject(msg.paths, msg.active)
 		m.projectCursor = projectIndex(m.activeProject, m.projectPaths)
-		m.svc = nil
 		if m.activeProject != "" {
 			m.svc = m.newService(m.activeProject)
 		}
-		m.SelectedPath = ""
 		return m, loadWorktrees(m.svc)
 
 	case loadDoneMsg:
@@ -262,13 +273,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if msg.String() == "ctrl+l" && m.mode != modeLobby {
+			return m.goToLobby()
+		}
+
 		switch m.mode {
+		case modeLobby:
+			switch msg.String() {
+			case "ctrl+c", "q":
+				m.quitting = true
+				return m, tea.Quit
+			case "p", "enter":
+				m.mode = modeProjectPicker
+				m.projectPickerReturn = modeLobby
+				m.projectCursor = projectIndex(m.activeProject, m.projectPaths)
+				m.banner = ""
+				return m, nil
+			}
+			return m, nil
+
 		case modeProjectPicker:
 			switch msg.String() {
 			case "esc", "q":
-				m.mode = modeList
+				m.mode = m.projectPickerReturn
 				m.marqueeTick = 0
-				return m, m.marqueeCmd()
+				if m.mode == modeList {
+					return m, m.marqueeCmd()
+				}
+				return m, nil
 			case "up", "k":
 				if m.projectCursor > 0 {
 					m.projectCursor--
@@ -314,10 +346,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.activeProject = ""
 					m.projectCursor = 0
 					m.svc = nil
-					m.loading = true
+					m.loading = false
+					m.mode = modeLobby
+					m.projectPickerReturn = modeLobby
 					m.SelectedPath = ""
 					_ = m.persistProjects()
-					return m, loadWorktrees(nil)
+					return m, nil
 				}
 				if m.projectCursor >= len(m.projectPaths) {
 					m.projectCursor = len(m.projectPaths) - 1
@@ -526,6 +560,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "p":
 			m.mode = modeProjectPicker
+			m.projectPickerReturn = modeList
 			m.projectCursor = projectIndex(m.activeProject, m.projectPaths)
 			m.banner = ""
 			return m, nil
@@ -893,6 +928,22 @@ func newBranchFilterInput() textinput.Model {
 	return ti
 }
 
+// goToLobby fuerza la pantalla de inicio (atajo ctrl+l).
+func (m Model) goToLobby() (Model, tea.Cmd) {
+	m.mode = modeLobby
+	m.projectPickerReturn = modeLobby
+	m.SelectedPath = ""
+	m.ExitKind = ""
+	m.ExitCustomCmd = ""
+	m.banner = ""
+	m.marqueeTick = 0
+	m.createStep = 0
+	m.createBaseRef = ""
+	m.renameFromPath = ""
+	m.deleteTargetPath = ""
+	return m, nil
+}
+
 func newExitCustomInput() textinput.Model {
 	ti := textinput.New()
 	ti.Placeholder = "ej. code {path} · cursor {path}"
@@ -1052,9 +1103,10 @@ func (m Model) submitAddProjectPath() (Model, tea.Cmd) {
 		m.banner = err.Error()
 		return m, nil
 	}
-	m.mode = modeProjectPicker
+	m.mode = modeList
 	m.banner = ""
 	m.loading = true
+	m.projectPickerReturn = modeList
 	return m, loadWorktrees(m.svc)
 }
 
@@ -1084,7 +1136,49 @@ func (m Model) centerInTerminal(block string) string {
 	)
 }
 
+func (m Model) renderLobbyPanel() string {
+	w := m.termW
+	if w < 1 {
+		w = 80
+	}
+	h := m.termH
+	if h < 1 {
+		h = 24
+	}
+	const headerReserve = 7
+	const footerReserve = 2
+	artRows := h - headerReserve - footerReserve
+	if artRows < 1 {
+		artRows = 1
+	}
+	artCols := w - 2
+	if artCols < 1 {
+		artCols = 1
+	}
+
+	var sb strings.Builder
+	sb.WriteString(m.styles.Header.Width(w).Render("Topo Orchestrator"))
+	sb.WriteString("\n\n")
+	sb.WriteString(m.styles.Muted.Render("Tu directorio actual no está en la lista de proyectos (o no es un repo git)."))
+	sb.WriteString("\n")
+	sb.WriteString(m.styles.Muted.Render("Abre proyectos para elegir o añadir un repositorio."))
+	sb.WriteString("\n\n")
+
+	scaled := fitTopoASCII(topoLobbyArt, artCols, artRows)
+	for _, line := range scaled {
+		sb.WriteString(m.styles.Muted.Render(line))
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\n")
+	sb.WriteString(m.styles.StatusBar.Width(w).Render("p / enter proyectos · q salir"))
+	return sb.String()
+}
+
 func (m Model) renderPanel() string {
+	if m.mode == modeLobby {
+		return m.renderLobbyPanel()
+	}
+
 	var sb strings.Builder
 
 	cols := m.gridCols()
@@ -1192,9 +1286,9 @@ func (m Model) renderPanel() string {
 		sb.WriteString("\n")
 	}
 
-	hints := "↑↓←→ / hjkl · enter elegir salida · p proyectos · b ramas preferidas · n · r · d · q salir"
+	hints := "↑↓←→ / hjkl · enter elegir salida · p proyectos · ctrl+l lobby · b ramas · n · r · d · q salir"
 	if m.mode == modeExitAction {
-		hints = "↑↓ opción · enter confirmar · esc volver · q salir (cd por defecto)"
+		hints = "↑↓ opción · enter confirmar · esc volver · ctrl+l lobby · q salir (cd por defecto)"
 	}
 	sb.WriteString(m.styles.StatusBar.Width(panelW).Render(hints))
 

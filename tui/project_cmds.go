@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"path/filepath"
-
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/macpro/git-worktree-orchestrator/internal/projects"
 	"github.com/macpro/git-worktree-orchestrator/internal/worktree"
@@ -22,8 +20,9 @@ type projectsLoadedMsg struct {
 	configPath         string
 	paths              []string
 	active             string
-	preferredBranches  map[string][]string
-	err                error
+	preferredBranches map[string][]string
+	showLobby         bool
+	err               error
 }
 
 func loadProjectsBootstrapCmd(seed string) tea.Cmd {
@@ -39,14 +38,14 @@ func loadProjectsBootstrapCmd(seed string) tea.Cmd {
 		paths := projects.NormalizePaths(f.Paths)
 		active := f.Active
 		pref := projects.NormalizePreferredBranchesMap(f.PreferredBranches)
-		if len(paths) == 0 && seed != "" {
-			if abs, e := filepath.Abs(seed); e == nil && projects.IsGitRepo(abs) {
-				paths = []string{filepath.Clean(abs)}
-				active = paths[0]
-				_ = projects.Save(cfgPath, projects.File{Paths: paths, Active: active, PreferredBranches: pref})
-			}
+		showLobby := projects.ShouldShowLobby(seed, paths)
+		return projectsLoadedMsg{
+			configPath:        cfgPath,
+			paths:             paths,
+			active:            active,
+			preferredBranches: pref,
+			showLobby:         showLobby,
 		}
-		return projectsLoadedMsg{configPath: cfgPath, paths: paths, active: active, preferredBranches: pref}
 	}
 }
 
