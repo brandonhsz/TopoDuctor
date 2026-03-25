@@ -10,4 +10,5 @@ const (
 	modeProjectPicker
 	modeAddProjectPath
 	modeBranchPrefs
+	modeExitAction
 )

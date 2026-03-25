@@ -142,6 +142,11 @@ type Model struct {
 	worktrees        []worktree.Worktree
 	cursor           int
 	SelectedPath     string
+	// ExitKind: "cd", "cursor" o "custom" al confirmar salida; vacío → main usa cd.
+	ExitKind      string
+	ExitCustomCmd string // plantilla con {path} cuando ExitKind es "custom"
+	exitActionCursor int
+	exitCustomCmdInput textinput.Model
 	keys             KeyMap
 	styles           Styles
 	quitting         bool
@@ -370,6 +375,81 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.branchPrefInputs[m.branchPrefFocus], cmd = m.branchPrefInputs[m.branchPrefFocus].Update(msg)
 			return m, cmd
 
+		case modeExitAction:
+			if m.exitActionCursor == 2 {
+				switch msg.String() {
+				case "esc":
+					m.mode = modeList
+					m.SelectedPath = ""
+					m.ExitKind = ""
+					m.ExitCustomCmd = ""
+					m.banner = ""
+					m.marqueeTick = 0
+					return m, m.marqueeCmd()
+				case "ctrl+c", "q":
+					m.quitting = true
+					return m, tea.Quit
+				case "up", "k":
+					m.exitActionCursor = 1
+					m.exitCustomCmdInput.Blur()
+					return m, nil
+				case "enter":
+					v := strings.TrimSpace(m.exitCustomCmdInput.Value())
+					if v == "" {
+						m.banner = "Escribe un comando con {path} o elige otra opción."
+						return m, nil
+					}
+					m.ExitKind = "custom"
+					m.ExitCustomCmd = v
+					m.banner = ""
+					m.quitting = true
+					return m, tea.Quit
+				}
+				var cmd tea.Cmd
+				m.exitCustomCmdInput, cmd = m.exitCustomCmdInput.Update(msg)
+				return m, cmd
+			}
+			switch msg.String() {
+			case "esc":
+				m.mode = modeList
+				m.SelectedPath = ""
+				m.ExitKind = ""
+				m.ExitCustomCmd = ""
+				m.banner = ""
+				m.marqueeTick = 0
+				return m, m.marqueeCmd()
+			case "ctrl+c", "q":
+				m.quitting = true
+				return m, tea.Quit
+			case "up", "k":
+				if m.exitActionCursor > 0 {
+					m.exitActionCursor--
+				}
+				return m, nil
+			case "down", "j":
+				if m.exitActionCursor < 2 {
+					m.exitActionCursor++
+					if m.exitActionCursor == 2 {
+						return m, m.exitCustomCmdInput.Focus()
+					}
+				}
+				return m, nil
+			case "enter":
+				switch m.exitActionCursor {
+				case 0:
+					m.ExitKind = "cd"
+					m.ExitCustomCmd = ""
+					m.quitting = true
+					return m, tea.Quit
+				case 1:
+					m.ExitKind = "cursor"
+					m.ExitCustomCmd = ""
+					m.quitting = true
+					return m, tea.Quit
+				}
+			}
+			return m, nil
+
 		case modeCreate:
 			if m.createStep == 0 {
 				return m.updateCreateBranchSelect(msg)
@@ -524,11 +604,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if len(m.worktrees) > 0 && m.cursor < len(m.worktrees) {
 				path := m.worktrees[m.cursor].Path
-				if m.SelectedPath == path {
-					m.SelectedPath = ""
-				} else {
-					m.SelectedPath = path
-				}
+				m.SelectedPath = path
+				m.mode = modeExitAction
+				m.exitActionCursor = 0
+				m.ExitKind = ""
+				m.ExitCustomCmd = ""
+				m.banner = ""
+				m.exitCustomCmdInput = newExitCustomInput()
 			}
 			return m, m.marqueeCmd()
 		}
@@ -728,7 +810,8 @@ func (m Model) renderWorktreeGrid() string {
 				cells = append(cells, placeholder)
 				continue
 			}
-			cells = append(cells, m.renderWTCard(wts[idx], idx == m.cursor && m.mode == modeList))
+			selGrid := m.mode == modeList || m.mode == modeExitAction
+			cells = append(cells, m.renderWTCard(wts[idx], idx == m.cursor && selGrid))
 		}
 		rows = append(rows, joinRowTop(cells))
 	}
@@ -808,6 +891,40 @@ func newBranchFilterInput() textinput.Model {
 	ti.Width = 52
 	ti.Focus()
 	return ti
+}
+
+func newExitCustomInput() textinput.Model {
+	ti := textinput.New()
+	ti.Placeholder = "ej. code {path} · cursor {path}"
+	ti.CharLimit = 512
+	ti.Width = 56
+	return ti
+}
+
+func (m Model) renderExitActionBlock() string {
+	var sb strings.Builder
+	sb.WriteString(m.styles.Prompt.Render("Al salir, usar:"))
+	sb.WriteString("\n")
+	opts := []string{
+		"Terminal (cd + $SHELL)",
+		"Cursor (abrir carpeta)",
+		"Comando personalizado — {path} = ruta del worktree",
+	}
+	for i, label := range opts {
+		line := truncateRunes(label, 58)
+		if i == m.exitActionCursor {
+			sb.WriteString(m.styles.SelectedItem.Render("› " + line))
+		} else {
+			sb.WriteString(m.styles.NormalItem.Render("  " + line))
+		}
+		sb.WriteString("\n")
+	}
+	if m.exitActionCursor == 2 {
+		sb.WriteString(m.exitCustomCmdInput.View())
+		sb.WriteString("\n")
+	}
+	sb.WriteString(m.styles.Muted.Render("enter confirmar · esc volver · q salir (cd)"))
+	return sb.String()
 }
 
 func newBranchPrefSlot(i int) textinput.Model {
@@ -1001,6 +1118,12 @@ func (m Model) renderPanel() string {
 	sb.WriteString("\n")
 
 	switch m.mode {
+	case modeExitAction:
+		sb.WriteString("\n")
+		sb.WriteString(m.styles.Muted.Render(truncateRunes(m.SelectedPath, 72)))
+		sb.WriteString("\n")
+		sb.WriteString(m.renderExitActionBlock())
+		sb.WriteString("\n")
 	case modeCreate:
 		sb.WriteString("\n")
 		if m.createStep == 0 {
@@ -1064,18 +1187,7 @@ func (m Model) renderPanel() string {
 		sb.WriteString(m.styles.Muted.Render("tab cambiar campo · enter guardar · esc volver"))
 		sb.WriteString("\n")
 	default:
-		if m.SelectedPath != "" {
-			sb.WriteString(m.styles.Message.Render("cd " + m.SelectedPath))
-			sb.WriteString("\n")
-			if m.printOnlyExit {
-				sb.WriteString(m.styles.Muted.Render("(al salir: se imprimirá cd en stdout; prueba eval \"$(…)\")"))
-			} else {
-				sb.WriteString(m.styles.Muted.Render("(al salir con q: se hará cd aquí y se abrirá tu $SHELL)"))
-			}
-			sb.WriteString("\n")
-		} else {
-			sb.WriteString("\n")
-		}
+		sb.WriteString("\n")
 	}
 
 	if m.banner != "" {
@@ -1083,7 +1195,10 @@ func (m Model) renderPanel() string {
 		sb.WriteString("\n")
 	}
 
-	hints := "↑↓←→ / hjkl · enter cd · p proyectos · b ramas preferidas · n · r · d · q salir"
+	hints := "↑↓←→ / hjkl · enter elegir salida · p proyectos · b ramas preferidas · n · r · d · q salir"
+	if m.mode == modeExitAction {
+		hints = "↑↓ opción · enter confirmar · esc volver · q salir (cd por defecto)"
+	}
 	sb.WriteString(m.styles.StatusBar.Width(panelW).Render(hints))
 
 	return sb.String()

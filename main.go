@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -16,7 +17,7 @@ import (
 )
 
 func main() {
-	printOnly := flag.Bool("print-only", false, "solo imprime cd en stdout (útil: eval \"$(ruta/al/binario)\")")
+	printOnly := flag.Bool("print-only", false, "solo imprime el comando en stdout (útil: eval \"$(ruta/al/binario)\")")
 	flag.Parse()
 
 	wd, err := os.Getwd()
@@ -40,20 +41,105 @@ func main() {
 		return
 	}
 
+	kind := m.ExitKind
+	if kind == "" {
+		kind = "cd"
+	}
+
 	if *printOnly {
-		fmt.Printf("cd %q\n", m.SelectedPath)
+		printOnlyExit(kind, m.SelectedPath, m.ExitCustomCmd)
 		return
 	}
 
-	if err := chdirAndExecShell(m.SelectedPath); err != nil {
+	if err := runExitAction(kind, m.SelectedPath, m.ExitCustomCmd); err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
 }
 
+func printOnlyExit(kind, path, customTpl string) {
+	switch kind {
+	case "cd":
+		fmt.Printf("cd %q\n", path)
+	case "cursor":
+		fmt.Println(cursorPrintLine(path))
+	case "custom":
+		fmt.Println(expandPathTemplate(customTpl, path))
+	default:
+		fmt.Printf("cd %q\n", path)
+	}
+}
+
+func runExitAction(kind, path, customTpl string) error {
+	switch kind {
+	case "cd":
+		return chdirAndExecShell(path)
+	case "cursor":
+		return openInCursor(path)
+	case "custom":
+		line := expandPathTemplate(customTpl, path)
+		return runShellLine(line)
+	default:
+		return chdirAndExecShell(path)
+	}
+}
+
+func expandPathTemplate(tpl, path string) string {
+	return strings.ReplaceAll(tpl, "{path}", strconv.Quote(path))
+}
+
+func cursorPrintLine(path string) string {
+	if _, err := exec.LookPath("cursor"); err == nil {
+		return fmt.Sprintf("cursor %s", strconv.Quote(path))
+	}
+	if runtime.GOOS == "darwin" {
+		return fmt.Sprintf("open -a Cursor %s", strconv.Quote(path))
+	}
+	return fmt.Sprintf("cursor %s", strconv.Quote(path))
+}
+
+func openInCursor(path string) error {
+	if lp, err := exec.LookPath("cursor"); err == nil {
+		cmd := exec.Command(lp, path)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
+	if runtime.GOOS == "darwin" {
+		cmd := exec.Command("open", "-a", "Cursor", path)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
+	return fmt.Errorf("no se encontró el comando \"cursor\" en PATH (instala la CLI de Cursor)")
+}
+
+func runShellLine(line string) error {
+	if runtime.GOOS == "windows" {
+		fmt.Fprintf(os.Stderr, "Ejecuta el comando a mano o usa -print-only. Comando:\n%s\n", line)
+		return nil
+	}
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+	shellPath, err := exec.LookPath(shell)
+	if err != nil {
+		shellPath = "/bin/sh"
+	}
+	cmd := exec.Command(shellPath, "-lc", line)
+	cmd.Env = os.Environ()
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 func chdirAndExecShell(path string) error {
 	if runtime.GOOS == "windows" {
-		fmt.Fprintf(os.Stderr, "En Windows no se puede reemplazar el shell desde el programa. Usa -print-only y copia el cd, o:\n")
+		fmt.Fprintf(os.Stderr, "En Windows no se puede reemplazar el shell desde el programa. Usa -print-only y copia el comando, o:\n")
 		fmt.Printf("cd /d %q\n", path)
 		return nil
 	}
@@ -86,7 +172,6 @@ func chdirAndExecShell(path string) error {
 }
 
 func shellArgv(name, shellPath string) []string {
-	// Bash/zsh: -i fuerza shell interactivo tras salir de la TUI.
 	if strings.Contains(shellPath, "bash") || strings.Contains(shellPath, "zsh") {
 		return []string{name, "-i"}
 	}
