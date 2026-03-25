@@ -1130,12 +1130,9 @@ func (m Model) renderPanel() string {
 			sb.WriteString(m.renderCreateBranchPickerBlock())
 			sb.WriteString("\n")
 		} else {
-			if m.activeProject != "" {
-				bn := filepath.Base(m.activeProject)
-				sb.WriteString(m.styles.Muted.Render("Carpeta: " + bn + "-<branchBase>"))
-				sb.WriteString("\n")
-			}
-			sb.WriteString(m.styles.Prompt.Render("branchBase: nombre de rama y sufijo de carpeta"))
+			sb.WriteString(m.styles.Muted.Render("Se creará en ~/.topoOrchestrator/projects/<proyecto>/worktree/<nombre>"))
+			sb.WriteString("\n")
+			sb.WriteString(m.styles.Prompt.Render("Nombre de rama y carpeta del worktree"))
 			sb.WriteString("\n")
 			sb.WriteString(m.nameInput.View())
 			sb.WriteString("\n")

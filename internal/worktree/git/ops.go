@@ -3,6 +3,7 @@ package git
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -36,7 +37,8 @@ func SanitizeWorktreeLabel(s string) string {
 	return strings.Trim(out, "-")
 }
 
-// AddUserWorktree crea carpeta <toplevel-base>-<label> y rama <label> (sanitizada) desde baseRef.
+// AddUserWorktree crea el worktree en ~/.topoOrchestrator/projects/<proyecto>/worktree/<label>
+// (rama <label> sanitizada) desde baseRef.
 func (r Runner) AddUserWorktree(baseRef, label string) error {
 	return r.addUserWith(execRunner{}, baseRef, label)
 }
@@ -60,9 +62,13 @@ func (r Runner) addUserWith(git GitCommandRunner, baseRef, label string) error {
 	if err != nil {
 		return fmt.Errorf("git root: %w", err)
 	}
-	parent := filepath.Dir(top)
-	base := filepath.Base(top)
-	newPath := filepath.Join(parent, base+"-"+slug)
+	newPath, err := checkoutPathForNewWorktree(top, slug)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(newPath), 0o755); err != nil {
+		return fmt.Errorf("crear directorio para worktree: %w", err)
+	}
 	if err := r.addWorktree(git, top, newPath, slug, baseRef); err != nil {
 		return err
 	}
