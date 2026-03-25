@@ -36,14 +36,21 @@ func SanitizeWorktreeLabel(s string) string {
 	return strings.Trim(out, "-")
 }
 
-// AddUserWorktree creates a sibling folder named <toplevel-base>-<label> with branch <label> (sanitized).
-func (r Runner) AddUserWorktree(label string) error {
-	return r.addUserWith(execRunner{}, label)
+// AddUserWorktree crea carpeta <toplevel-base>-<label> y rama <label> (sanitizada) desde baseRef.
+func (r Runner) AddUserWorktree(baseRef, label string) error {
+	return r.addUserWith(execRunner{}, baseRef, label)
 }
 
-func (r Runner) addUserWith(git GitCommandRunner, label string) error {
+func (r Runner) addUserWith(git GitCommandRunner, baseRef, label string) error {
 	if err := r.assertInsideRepo(git); err != nil {
 		return err
+	}
+	baseRef = strings.TrimSpace(baseRef)
+	if baseRef == "" {
+		return errors.New("indica la rama base (ej. main)")
+	}
+	if _, err := git.OutputGit(r.Dir, "rev-parse", "--verify", baseRef); err != nil {
+		return fmt.Errorf("rama base no válida: %w", err)
 	}
 	slug := SanitizeWorktreeLabel(label)
 	if slug == "" {
@@ -56,7 +63,7 @@ func (r Runner) addUserWith(git GitCommandRunner, label string) error {
 	parent := filepath.Dir(top)
 	base := filepath.Base(top)
 	newPath := filepath.Join(parent, base+"-"+slug)
-	if err := r.addWorktree(git, top, newPath, slug); err != nil {
+	if err := r.addWorktree(git, top, newPath, slug, baseRef); err != nil {
 		return err
 	}
 	return nil

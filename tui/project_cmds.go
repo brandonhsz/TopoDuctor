@@ -19,10 +19,11 @@ type ServiceFactory func(dir string) worktree.Service
 
 // projectsLoadedMsg is sent after reading persisted projects (and optional seed).
 type projectsLoadedMsg struct {
-	configPath string
-	paths      []string
-	active     string
-	err        error
+	configPath         string
+	paths              []string
+	active             string
+	preferredBranches  map[string][]string
+	err                error
 }
 
 func loadProjectsBootstrapCmd(seed string) tea.Cmd {
@@ -37,14 +38,15 @@ func loadProjectsBootstrapCmd(seed string) tea.Cmd {
 		}
 		paths := projects.NormalizePaths(f.Paths)
 		active := f.Active
+		pref := projects.NormalizePreferredBranchesMap(f.PreferredBranches)
 		if len(paths) == 0 && seed != "" {
 			if abs, e := filepath.Abs(seed); e == nil && projects.IsGitRepo(abs) {
 				paths = []string{filepath.Clean(abs)}
 				active = paths[0]
-				_ = projects.Save(cfgPath, projects.File{Paths: paths, Active: active})
+				_ = projects.Save(cfgPath, projects.File{Paths: paths, Active: active, PreferredBranches: pref})
 			}
 		}
-		return projectsLoadedMsg{configPath: cfgPath, paths: paths, active: active}
+		return projectsLoadedMsg{configPath: cfgPath, paths: paths, active: active, preferredBranches: pref}
 	}
 }
 
@@ -52,7 +54,11 @@ func (m *Model) persistProjects() error {
 	if m.configPath == "" {
 		return nil
 	}
-	return projects.Save(m.configPath, projects.File{Paths: m.projectPaths, Active: m.activeProject})
+	return projects.Save(m.configPath, projects.File{
+		Paths:             m.projectPaths,
+		Active:            m.activeProject,
+		PreferredBranches: m.preferredBranchesByPath,
+	})
 }
 
 func loadWorktrees(svc worktree.Service) tea.Cmd {

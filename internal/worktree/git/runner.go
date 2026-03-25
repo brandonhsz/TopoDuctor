@@ -53,8 +53,43 @@ func (r Runner) listWith(git GitCommandRunner) ([]worktree.Worktree, error) {
 	return parsePorcelain(string(out))
 }
 
-func (r Runner) addWorktree(git GitCommandRunner, top, newPath, branch string) error {
-	_, err := git.OutputGit(top, "worktree", "add", "-b", branch, newPath, "HEAD")
+// ListBranches lists local and remote-tracking branch short names (sorted).
+func (r Runner) ListBranches() ([]string, error) {
+	return r.listBranchesWith(execRunner{})
+}
+
+func (r Runner) listBranchesWith(git GitCommandRunner) ([]string, error) {
+	out, err := git.OutputGit(r.Dir, "for-each-ref", "--sort=refname", "--format=%(refname:short)", "refs/heads", "refs/remotes")
+	if err != nil {
+		return nil, fmt.Errorf("git for-each-ref: %w", err)
+	}
+	s := strings.TrimSpace(string(out))
+	if s == "" {
+		return nil, nil
+	}
+	lines := strings.Split(s, "\n")
+	seen := make(map[string]struct{})
+	var res []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Evita punteros simbólicos tipo origin/HEAD.
+		if strings.HasSuffix(line, "/HEAD") {
+			continue
+		}
+		if _, ok := seen[line]; ok {
+			continue
+		}
+		seen[line] = struct{}{}
+		res = append(res, line)
+	}
+	return res, nil
+}
+
+func (r Runner) addWorktree(git GitCommandRunner, top, newPath, newBranch, startPoint string) error {
+	_, err := git.OutputGit(top, "worktree", "add", "-b", newBranch, newPath, startPoint)
 	if err != nil {
 		return fmt.Errorf("git worktree add: %w", err)
 	}

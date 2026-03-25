@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,9 +113,13 @@ type Model struct {
 	newService       ServiceFactory
 	seedCwd          string
 	configPath       string
-	projectPaths     []string
-	activeProject    string
-	projectCursor    int
+	projectPaths              []string
+	activeProject             string
+	preferredBranchesByPath   map[string][]string
+	projectCursor             int
+	branchPrefFocus           int
+	branchPrefsForPath        string
+	branchPrefInputs          [3]textinput.Model
 	projPathInput    textinput.Model
 	svc              worktree.Service
 	printOnlyExit    bool
@@ -123,6 +128,14 @@ type Model struct {
 	busy             bool
 	banner           string
 	mode             viewMode
+	createStep       int // 0 = rama base, 1 = branchBase (nombre rama / sufijo carpeta)
+	createBaseRef    string
+	createBranchesLoading bool
+	createBranchesLoadErr string
+	createBranchesAll     []string
+	createBranchFilter    textinput.Model
+	createBranchCursor    int
+	createBranchScroll    int
 	nameInput        textinput.Model
 	renameFromPath   string
 	deleteTargetPath string
@@ -173,6 +186,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.configPath = msg.configPath
 		m.projectPaths = msg.paths
+		m.preferredBranchesByPath = msg.preferredBranches
 		m.activeProject = pickActiveProject(msg.paths, msg.active)
 		m.projectCursor = projectIndex(m.activeProject, m.projectPaths)
 		m.svc = nil
@@ -206,6 +220,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		syncSelectedPath(&m)
 		m.marqueeTick = 0
 		return m, m.marqueeCmd()
+
+	case branchesLoadedMsg:
+		m.createBranchesLoading = false
+		if msg.err != nil {
+			m.createBranchesLoadErr = msg.err.Error()
+			return m, nil
+		}
+		m.createBranchesAll = msg.branches
+		m.createBranchesLoadErr = ""
+		m.createBranchCursor = 0
+		m.createBranchScroll = 0
+		return m, m.createBranchFilter.Focus()
 
 	case marqueeTickMsg:
 		if m.mode != modeList || m.quitting || len(m.worktrees) == 0 {
@@ -264,12 +290,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = modeAddProjectPath
 				m.projPathInput = newProjectPathInput()
 				return m, m.projPathInput.Focus()
+			case "b", "B":
+				if len(m.projectPaths) == 0 {
+					return m, nil
+				}
+				return m.openBranchPrefsForPath(m.projectPaths[m.projectCursor])
 			case "d":
 				if len(m.projectPaths) == 0 {
 					return m, nil
 				}
 				m.banner = ""
 				removed := m.projectPaths[m.projectCursor]
+				if m.preferredBranchesByPath != nil {
+					delete(m.preferredBranchesByPath, filepath.Clean(removed))
+				}
 				m.projectPaths = append(m.projectPaths[:m.projectCursor], m.projectPaths[m.projectCursor+1:]...)
 				if len(m.projectPaths) == 0 {
 					m.activeProject = ""
@@ -309,7 +343,61 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.projPathInput, cmd = m.projPathInput.Update(msg)
 			return m, cmd
 
-		case modeCreate, modeRename:
+		case modeBranchPrefs:
+			switch msg.String() {
+			case "esc":
+				m.mode = modeProjectPicker
+				m.banner = ""
+				return m, nil
+			case "enter":
+				if err := m.saveBranchPrefs(); err != nil {
+					m.banner = err.Error()
+					return m, nil
+				}
+				m.banner = ""
+				m.mode = modeProjectPicker
+				return m, nil
+			case "tab":
+				m.branchPrefFocus = (m.branchPrefFocus + 1) % 3
+				for i := range m.branchPrefInputs {
+					if i != m.branchPrefFocus {
+						m.branchPrefInputs[i].Blur()
+					}
+				}
+				return m, m.branchPrefInputs[m.branchPrefFocus].Focus()
+			}
+			var cmd tea.Cmd
+			m.branchPrefInputs[m.branchPrefFocus], cmd = m.branchPrefInputs[m.branchPrefFocus].Update(msg)
+			return m, cmd
+
+		case modeCreate:
+			if m.createStep == 0 {
+				return m.updateCreateBranchSelect(msg)
+			}
+			switch msg.String() {
+			case "esc":
+				m.createStep = 0
+				m.banner = ""
+				m.marqueeTick = 0
+				return m, m.createBranchFilter.Focus()
+			case "enter":
+				v := strings.TrimSpace(m.nameInput.Value())
+				if v == "" {
+					return m, nil
+				}
+				base := m.createBaseRef
+				m.mode = modeList
+				m.busy = true
+				m.createStep = 0
+				m.createBaseRef = ""
+				m.resetCreateBranchState()
+				return m, addWorktreeCmd(m.svc, base, v)
+			}
+			var cmd tea.Cmd
+			m.nameInput, cmd = m.nameInput.Update(msg)
+			return m, cmd
+
+		case modeRename:
 			switch msg.String() {
 			case "esc":
 				m.mode = modeList
@@ -323,12 +411,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.mode = modeList
 				m.busy = true
-				if m.renameFromPath != "" {
-					p := m.renameFromPath
-					m.renameFromPath = ""
-					return m, moveWorktreeCmd(m.svc, p, v)
-				}
-				return m, addWorktreeCmd(m.svc, v)
+				p := m.renameFromPath
+				m.renameFromPath = ""
+				return m, moveWorktreeCmd(m.svc, p, v)
 			}
 			var cmd tea.Cmd
 			m.nameInput, cmd = m.nameInput.Update(msg)
@@ -364,6 +449,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.projectCursor = projectIndex(m.activeProject, m.projectPaths)
 			m.banner = ""
 			return m, nil
+		case "b", "B":
+			if m.activeProject == "" {
+				m.banner = "Añade o activa un proyecto (p)."
+				return m, nil
+			}
+			return m.openBranchPrefsForPath(m.activeProject)
 		case "n":
 			if m.svc == nil {
 				m.banner = "Añade un proyecto (p → a) antes de crear worktrees."
@@ -371,9 +462,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.banner = ""
 			m.mode = modeCreate
+			m.createStep = 0
+			m.createBaseRef = ""
 			m.renameFromPath = ""
-			m.nameInput = newNameInput("ej. feature-login")
-			return m, m.nameInput.Focus()
+			m.createBranchesLoading = true
+			m.createBranchesLoadErr = ""
+			m.createBranchesAll = nil
+			m.createBranchCursor = 0
+			m.createBranchScroll = 0
+			m.createBranchFilter = newBranchFilterInput()
+			return m, tea.Batch(m.createBranchFilter.Focus(), loadBranchesCmd(m.svc))
 		case "r":
 			if len(m.worktrees) == 0 {
 				return m, nil
@@ -703,6 +801,57 @@ func newNameInput(placeholder string) textinput.Model {
 	return ti
 }
 
+func newBranchFilterInput() textinput.Model {
+	ti := textinput.New()
+	ti.Placeholder = "Filtrar ramas…"
+	ti.CharLimit = 128
+	ti.Width = 52
+	ti.Focus()
+	return ti
+}
+
+func newBranchPrefSlot(i int) textinput.Model {
+	ti := textinput.New()
+	ti.Placeholder = fmt.Sprintf("Rama %d (ej. main)", i+1)
+	ti.CharLimit = 128
+	ti.Width = 52
+	return ti
+}
+
+// openBranchPrefsForPath abre la pantalla de ramas preferidas para un repo (ruta absoluta).
+func (m Model) openBranchPrefsForPath(repoPath string) (Model, tea.Cmd) {
+	m.banner = ""
+	m.mode = modeBranchPrefs
+	m.branchPrefsForPath = filepath.Clean(repoPath)
+	m.branchPrefFocus = 0
+	prefs := m.preferredBranchesByPath[m.branchPrefsForPath]
+	for i := range m.branchPrefInputs {
+		m.branchPrefInputs[i] = newBranchPrefSlot(i)
+		if i < len(prefs) {
+			m.branchPrefInputs[i].SetValue(prefs[i])
+		}
+	}
+	return m, m.branchPrefInputs[0].Focus()
+}
+
+func (m *Model) saveBranchPrefs() error {
+	var raw []string
+	for i := 0; i < 3; i++ {
+		raw = append(raw, m.branchPrefInputs[i].Value())
+	}
+	names := projects.NormalizePreferredBranchNames(raw)
+	if m.preferredBranchesByPath == nil {
+		m.preferredBranchesByPath = make(map[string][]string)
+	}
+	key := filepath.Clean(m.branchPrefsForPath)
+	if len(names) == 0 {
+		delete(m.preferredBranchesByPath, key)
+	} else {
+		m.preferredBranchesByPath[key] = names
+	}
+	return m.persistProjects()
+}
+
 func newProjectPathInput() textinput.Model {
 	ti := textinput.New()
 	ti.Placeholder = "ruta absoluta o ~/al/repo"
@@ -854,11 +1003,21 @@ func (m Model) renderPanel() string {
 	switch m.mode {
 	case modeCreate:
 		sb.WriteString("\n")
-		sb.WriteString(m.styles.Prompt.Render("Nuevo worktree"))
-		sb.WriteString("\n")
-		sb.WriteString(m.nameInput.View())
-		sb.WriteString("\n")
-		sb.WriteString(m.styles.Muted.Render("enter crear · esc cancelar"))
+		if m.createStep == 0 {
+			sb.WriteString(m.renderCreateBranchPickerBlock())
+			sb.WriteString("\n")
+		} else {
+			if m.activeProject != "" {
+				bn := filepath.Base(m.activeProject)
+				sb.WriteString(m.styles.Muted.Render("Carpeta: " + bn + "-<branchBase>"))
+				sb.WriteString("\n")
+			}
+			sb.WriteString(m.styles.Prompt.Render("branchBase: nombre de rama y sufijo de carpeta"))
+			sb.WriteString("\n")
+			sb.WriteString(m.nameInput.View())
+			sb.WriteString("\n")
+			sb.WriteString(m.styles.Muted.Render("enter crear · esc volver al paso anterior"))
+		}
 		sb.WriteString("\n")
 	case modeRename:
 		sb.WriteString("\n")
@@ -882,7 +1041,7 @@ func (m Model) renderPanel() string {
 		sb.WriteString("\n")
 		sb.WriteString(m.renderProjectPickerList())
 		sb.WriteString("\n")
-		sb.WriteString(m.styles.Muted.Render("enter activar · a añadir ruta · d quitar · esc volver"))
+		sb.WriteString(m.styles.Muted.Render("enter activar · a añadir · b ramas preferidas · d quitar · esc volver"))
 		sb.WriteString("\n")
 	case modeAddProjectPath:
 		sb.WriteString("\n")
@@ -891,6 +1050,18 @@ func (m Model) renderPanel() string {
 		sb.WriteString(m.projPathInput.View())
 		sb.WriteString("\n")
 		sb.WriteString(m.styles.Muted.Render("enter añadir · esc cancelar"))
+		sb.WriteString("\n")
+	case modeBranchPrefs:
+		sb.WriteString("\n")
+		sb.WriteString(m.styles.Prompt.Render("Ramas preferidas (salen primero al elegir rama base)"))
+		sb.WriteString("\n")
+		sb.WriteString(m.styles.Muted.Render(m.branchPrefsForPath))
+		sb.WriteString("\n\n")
+		for i := 0; i < 3; i++ {
+			sb.WriteString(m.branchPrefInputs[i].View())
+			sb.WriteString("\n")
+		}
+		sb.WriteString(m.styles.Muted.Render("tab cambiar campo · enter guardar · esc volver"))
 		sb.WriteString("\n")
 	default:
 		if m.SelectedPath != "" {
@@ -912,7 +1083,7 @@ func (m Model) renderPanel() string {
 		sb.WriteString("\n")
 	}
 
-	hints := "↑↓←→ / hjkl · enter cd · p proyectos · n · r · d · q salir"
+	hints := "↑↓←→ / hjkl · enter cd · p proyectos · b ramas preferidas · n · r · d · q salir"
 	sb.WriteString(m.styles.StatusBar.Width(panelW).Render(hints))
 
 	return sb.String()

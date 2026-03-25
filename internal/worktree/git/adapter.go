@@ -18,8 +18,12 @@ func (a *Adapter) List() ([]worktree.Worktree, error) {
 	return a.Runner.List()
 }
 
-func (a *Adapter) AddUserWorktree(label string) error {
-	return a.Runner.AddUserWorktree(label)
+func (a *Adapter) ListBranches() ([]string, error) {
+	return a.Runner.ListBranches()
+}
+
+func (a *Adapter) AddUserWorktree(baseRef, label string) error {
+	return a.Runner.AddUserWorktree(baseRef, label)
 }
 
 func (a *Adapter) MoveWorktree(oldPath, newBasename string) error {

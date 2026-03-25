@@ -10,6 +10,8 @@ import (
 type File struct {
 	Paths  []string `json:"paths"`
 	Active string   `json:"active"`
+	// PreferredBranches: ruta absoluta del repo -> hasta 3 nombres de rama (orden = prioridad al listar).
+	PreferredBranches map[string][]string `json:"preferred_branches,omitempty"`
 }
 
 // DefaultConfigPath returns ~/.config/git-worktree-orchestrator/projects.json (OS-aware).

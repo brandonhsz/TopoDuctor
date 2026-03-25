@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"errors"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/macpro/git-worktree-orchestrator/internal/worktree"
 )
@@ -9,6 +11,22 @@ import (
 type refreshDoneMsg struct {
 	worktrees []worktree.Worktree
 	err       error
+}
+
+// branchesLoadedMsg entrega el listado de ramas para el selector al crear worktree.
+type branchesLoadedMsg struct {
+	branches []string
+	err      error
+}
+
+func loadBranchesCmd(svc worktree.Service) tea.Cmd {
+	return func() tea.Msg {
+		if svc == nil {
+			return branchesLoadedMsg{err: errors.New("sin servicio git")}
+		}
+		b, err := svc.ListBranches()
+		return branchesLoadedMsg{branches: b, err: err}
+	}
 }
 
 func reloadListCmd(svc worktree.Service) tea.Cmd {
@@ -21,9 +39,9 @@ func reloadListCmd(svc worktree.Service) tea.Cmd {
 	}
 }
 
-func addWorktreeCmd(svc worktree.Service, label string) tea.Cmd {
+func addWorktreeCmd(svc worktree.Service, baseRef, label string) tea.Cmd {
 	return func() tea.Msg {
-		if err := svc.AddUserWorktree(label); err != nil {
+		if err := svc.AddUserWorktree(baseRef, label); err != nil {
 			return refreshDoneMsg{err: err}
 		}
 		gw, err := svc.List()

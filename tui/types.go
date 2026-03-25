@@ -9,4 +9,5 @@ const (
 	modeDeleteConfirm
 	modeProjectPicker
 	modeAddProjectPath
+	modeBranchPrefs
 )
