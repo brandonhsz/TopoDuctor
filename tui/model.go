@@ -30,84 +30,6 @@ const marqueeTickInterval = 200 * time.Millisecond
 // marqueeTickMsg drives horizontal scrolling for truncated text on the selected card.
 type marqueeTickMsg struct{}
 
-// Styles defines the lipgloss styles used in the TUI.
-type Styles struct {
-	Header       lipgloss.Style
-	SelectedItem lipgloss.Style
-	NormalItem   lipgloss.Style
-	StatusBar    lipgloss.Style
-	Message      lipgloss.Style
-	Error        lipgloss.Style
-	Muted        lipgloss.Style
-	Border       lipgloss.Style
-	Card         lipgloss.Style
-	CardSelected lipgloss.Style
-	Prompt       lipgloss.Style
-}
-
-// defaultStyles returns the default lipgloss styles.
-func defaultStyles() Styles {
-	return Styles{
-		Header: lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#7C3AED")).
-			Background(lipgloss.Color("#1E1E2E")).
-			Padding(0, 2).
-			Width(60).
-			Align(lipgloss.Center),
-
-		SelectedItem: lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#CDD6F4")).
-			Background(lipgloss.Color("#313244")).
-			Padding(0, 2),
-
-		NormalItem: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#BAC2DE")).
-			Padding(0, 2),
-
-		StatusBar: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#6C7086")).
-			Background(lipgloss.Color("#181825")).
-			Padding(0, 2).
-			Width(60),
-
-		Message: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#A6E3A1")).
-			Padding(0, 2),
-
-		Error: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#F38BA8")).
-			Padding(0, 2).
-			Width(56),
-
-		Muted: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#6C7086")),
-
-		Border: lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#45475A")).
-			Padding(1, 2).
-			Width(56),
-
-		Card: lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#45475A")).
-			Padding(0, 1).
-			Width(26),
-
-		CardSelected: lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#CBA6F7")).
-			Padding(0, 1).
-			Width(26),
-
-		Prompt: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#89B4FA")).
-			Bold(true),
-	}
-}
-
 // Model is the main bubbletea model for the application.
 type Model struct {
 	newService       ServiceFactory
@@ -812,8 +734,8 @@ func joinRowTop(cells []string) string {
 func (m Model) renderWTCard(wt worktree.Worktree, selected bool) string {
 	name := m.cardNameText(wt, selected)
 	br := m.cardBranchText(wt, selected)
-	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#CDD6F4")).Render(name)
-	sub := m.styles.Muted.Render("↳ " + br)
+	title := m.styles.CardTitle.Render(name)
+	sub := m.styles.CardSub.Render("↳ " + br)
 	inner := lipgloss.JoinVertical(lipgloss.Left, title, sub)
 	inner = lipgloss.NewStyle().Width(22).Render(inner)
 
@@ -854,7 +776,7 @@ func (m Model) renderWorktreeGrid() string {
 }
 
 func (m Model) renderProjectStripWide(panelW int) string {
-	st := m.styles.Muted.Width(panelW)
+	st := m.styles.ProjectStrip.Width(panelW)
 	if m.activeProject == "" {
 		return st.Render("Proyecto: —")
 	}
@@ -1118,6 +1040,7 @@ func (m Model) View() string {
 	return m.centerInTerminal(m.renderPanel())
 }
 
+// centerInTerminal centers the panel in the terminal (original compact layout).
 func (m Model) centerInTerminal(block string) string {
 	w, h := m.termW, m.termH
 	if w < 1 {
@@ -1126,14 +1049,73 @@ func (m Model) centerInTerminal(block string) string {
 	if h < 1 {
 		h = 24
 	}
-	bg := lipgloss.Color("#1E1E2E")
 	return lipgloss.Place(
 		w, h,
 		lipgloss.Center, lipgloss.Center,
 		block,
 		lipgloss.WithWhitespaceChars(" "),
-		lipgloss.WithWhitespaceBackground(bg),
 	)
+}
+
+// renderAppHeader is a Lip Gloss–style title row with magenta underline and green accent.
+func (m Model) renderAppHeader(panelW int) string {
+	if panelW < 1 {
+		panelW = 80
+	}
+	title := lipgloss.NewStyle().Bold(true).Foreground(colPurpleHi).Render("TopoDuctor")
+	tag := lipgloss.NewStyle().Foreground(colGreen).Render(" · git worktrees")
+	row := lipgloss.JoinHorizontal(lipgloss.Left, title, tag)
+	return lipgloss.NewStyle().
+		Width(panelW).
+		Align(lipgloss.Center).
+		Border(lipgloss.NormalBorder(), false, false, true, false).
+		BorderForeground(colPink).
+		Padding(0, 2).
+		MarginBottom(1).
+		Render(row)
+}
+
+// renderAppStatusBar is a segmented footer: brand (pink) · hints · right badge (purple).
+func (m Model) renderAppStatusBar(panelW int, hint string) string {
+	if panelW < 24 {
+		panelW = 24
+	}
+	brand := lipgloss.NewStyle().
+		Foreground(colPinkDeep).
+		Bold(true).
+		Padding(0, 2).
+		Render("TopoDuctor")
+
+	var rightLabel string
+	if m.mode == modeList && !m.loading && m.loadErr == "" && !m.busy {
+		rightLabel = lipgloss.NewStyle().
+			Foreground(colPurple).
+			Bold(true).
+			Padding(0, 2).
+			Render(fmt.Sprintf("%d wt", len(m.worktrees)))
+	} else {
+		rightLabel = lipgloss.NewStyle().
+			Foreground(colPurple).
+			Padding(0, 2).
+			Render("ready")
+	}
+
+	used := lipgloss.Width(brand) + lipgloss.Width(rightLabel)
+	midW := panelW - used
+	if midW < 6 {
+		midW = 6
+	}
+	h := strings.TrimSpace(hint)
+	if h == "" {
+		h = " "
+	}
+	h = truncateRunes(h, midW-2)
+	mid := lipgloss.NewStyle().
+		Width(midW).
+		Foreground(colTextMuted).
+		Padding(0, 2).
+		Render(h)
+	return lipgloss.JoinHorizontal(lipgloss.Top, brand, mid, rightLabel)
 }
 
 func (m Model) renderLobbyPanel() string {
@@ -1157,8 +1139,8 @@ func (m Model) renderLobbyPanel() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(m.styles.Header.Width(w).Render("Topo Orchestrator"))
-	sb.WriteString("\n\n")
+	sb.WriteString(m.renderAppHeader(w))
+	sb.WriteString("\n")
 	sb.WriteString(m.styles.Muted.Render("Tu directorio actual no está en la lista de proyectos (o no es un repo git)."))
 	sb.WriteString("\n")
 	sb.WriteString(m.styles.Muted.Render("Abre proyectos para elegir o añadir un repositorio."))
@@ -1170,7 +1152,7 @@ func (m Model) renderLobbyPanel() string {
 		sb.WriteString("\n")
 	}
 	sb.WriteString("\n")
-	sb.WriteString(m.styles.StatusBar.Width(w).Render("p / enter proyectos · q salir"))
+	sb.WriteString(m.renderAppStatusBar(w, "p / enter proyectos · q salir"))
 	return sb.String()
 }
 
@@ -1183,8 +1165,7 @@ func (m Model) renderPanel() string {
 
 	cols := m.gridCols()
 	panelW := gridTotalWidth(cols)
-	header := m.styles.Header.Width(panelW).Render("Git Worktree Orchestrator")
-	sb.WriteString(header)
+	sb.WriteString(m.renderAppHeader(panelW))
 	sb.WriteString("\n")
 	sb.WriteString(m.renderProjectStripWide(panelW))
 	sb.WriteString("\n\n")
@@ -1192,14 +1173,14 @@ func (m Model) renderPanel() string {
 	if m.loading {
 		sb.WriteString(m.styles.Message.Render("Cargando worktrees…"))
 		sb.WriteString("\n\n")
-		sb.WriteString(m.styles.StatusBar.Width(panelW).Render("q salir"))
+		sb.WriteString(m.renderAppStatusBar(panelW, "q salir"))
 		return sb.String()
 	}
 
 	if m.loadErr != "" {
 		sb.WriteString(m.styles.Error.Width(panelW - 4).Render(m.loadErr))
 		sb.WriteString("\n\n")
-		sb.WriteString(m.styles.StatusBar.Width(panelW).Render("q salir"))
+		sb.WriteString(m.renderAppStatusBar(panelW, "q salir"))
 		return sb.String()
 	}
 
@@ -1290,7 +1271,7 @@ func (m Model) renderPanel() string {
 	if m.mode == modeExitAction {
 		hints = "↑↓ opción · enter confirmar · esc volver · ctrl+l lobby · q salir (cd por defecto)"
 	}
-	sb.WriteString(m.styles.StatusBar.Width(panelW).Render(hints))
+	sb.WriteString(m.renderAppStatusBar(panelW, hints))
 
 	return sb.String()
 }
