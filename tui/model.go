@@ -33,6 +33,7 @@ type marqueeTickMsg struct{}
 // Model is the main bubbletea model for the application.
 type Model struct {
 	newService       ServiceFactory
+	version          string
 	seedCwd          string
 	configPath       string
 	projectPaths              []string
@@ -80,9 +81,11 @@ type Model struct {
 
 // New builds a Model. factory creates worktree.Service por repo; seedCwd es el cwd al arrancar (para lobby vs proyecto).
 // If printOnlyExit is true, main will only print cd to stdout instead of chdir+exec shell.
-func New(factory ServiceFactory, seedCwd string, printOnlyExit bool) Model {
+// version is shown in the TUI header (e.g. from -ldflags -X main.version=… or "dev").
+func New(factory ServiceFactory, seedCwd string, printOnlyExit bool, version string) Model {
 	return Model{
 		newService:          factory,
+		version:             version,
 		seedCwd:             seedCwd,
 		printOnlyExit:       printOnlyExit,
 		loading:             true,
@@ -1037,11 +1040,6 @@ func (m Model) View() string {
 	if m.quitting {
 		return ""
 	}
-	return m.centerInTerminal(m.renderPanel())
-}
-
-// centerInTerminal centers the panel in the terminal (original compact layout).
-func (m Model) centerInTerminal(block string) string {
 	w, h := m.termW, m.termH
 	if w < 1 {
 		w = 80
@@ -1049,12 +1047,33 @@ func (m Model) centerInTerminal(block string) string {
 	if h < 1 {
 		h = 24
 	}
-	return lipgloss.Place(
-		w, h,
+	// Version on a full-width row so it is never clipped when the panel is wider than the terminal.
+	top := m.renderVersionTopBar(w)
+	contentH := h - lipgloss.Height(top)
+	if contentH < 1 {
+		contentH = 1
+	}
+	main := lipgloss.Place(
+		w, contentH,
 		lipgloss.Center, lipgloss.Center,
-		block,
+		m.renderPanel(),
 		lipgloss.WithWhitespaceChars(" "),
 	)
+	return lipgloss.JoinVertical(lipgloss.Left, top, main)
+}
+
+// renderVersionTopBar is one full terminal-width line, version right-aligned (not inside the centered panel).
+func (m Model) renderVersionTopBar(termW int) string {
+	if termW < 1 {
+		termW = 80
+	}
+	verStr := strings.TrimSpace(m.version)
+	if verStr == "" {
+		verStr = "dev"
+	}
+	verStr = truncateRunes(verStr, 32)
+	label := lipgloss.NewStyle().Foreground(colPurple).Render(verStr)
+	return lipgloss.NewStyle().Width(termW).Align(lipgloss.Right).Padding(0, 1, 0, 0).Render(label)
 }
 
 // renderAppHeader is a Lip Gloss–style title row with magenta underline and green accent.

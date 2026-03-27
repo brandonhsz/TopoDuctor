@@ -35,7 +35,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	model := tui.New(wtgit.NewService, wd, *printOnly)
+	model := tui.New(wtgit.NewService, wd, *printOnly, version)
 
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
