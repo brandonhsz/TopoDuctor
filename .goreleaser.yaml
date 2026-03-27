@@ -49,6 +49,8 @@ release:
   github:
     owner: brandonhsz
     name: TopoDuctor
+  # Re-ejecutar el workflow sobre el mismo tag: sustituye assets que ya existen (422 already_exists).
+  replace_existing_artifacts: true
 
 homebrew_casks:
   - name: topoductor
