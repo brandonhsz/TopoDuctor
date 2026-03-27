@@ -10,8 +10,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/macpro/git-worktree-orchestrator/internal/projects"
-	"github.com/macpro/git-worktree-orchestrator/internal/worktree"
+	"github.com/macpro/topoductor/internal/projects"
+	"github.com/macpro/topoductor/internal/worktree"
 )
 
 // cardOuterW is the lipgloss block width of one worktree card (border + content).
@@ -1224,7 +1224,7 @@ func (m Model) renderPanel() string {
 			sb.WriteString(m.renderCreateBranchPickerBlock())
 			sb.WriteString("\n")
 		} else {
-			sb.WriteString(m.styles.Muted.Render("Se creará en ~/.topoOrchestrator/projects/<proyecto>/worktree/<nombre>"))
+			sb.WriteString(m.styles.Muted.Render("Se creará en ~/.topoDuctor/projects/<proyecto>/worktree/<nombre>"))
 			sb.WriteString("\n")
 			sb.WriteString(m.styles.Prompt.Render("Nombre de rama y carpeta del worktree"))
 			sb.WriteString("\n")

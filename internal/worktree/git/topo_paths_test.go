@@ -12,8 +12,8 @@ func TestCheckoutPathForNewWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(p, ".topoOrchestrator") {
-		t.Fatalf("expected .topoOrchestrator in path: %s", p)
+	if !strings.Contains(p, ".topoDuctor") {
+		t.Fatalf("expected .topoDuctor in path: %s", p)
 	}
 	if !strings.Contains(p, string(filepath.Separator)+"projects"+string(filepath.Separator)) {
 		t.Fatalf("expected projects segment: %s", p)

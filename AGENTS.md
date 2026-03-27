@@ -1,4 +1,4 @@
-# Git Worktree Orchestrator — guía para agentes
+# TopoDuctor — guía para agentes
 
 ## Propósito
 
@@ -9,7 +9,7 @@ Comportamiento implementado:
 - **Al abrir**: solo lista worktrees existentes (`git worktree list --porcelain`); no se crea ninguno automáticamente.
 - **Crear**: atajo **n** y nombre deseado (carpeta `<repo>-<nombre>` y rama con el mismo slug).
 - **Salida con selección**: por defecto `Chdir` + `exec` del `$SHELL` en esa ruta; con `-print-only` solo se imprime `cd "…"` en stdout.
-- **Estado opcional**: `worktree-orchestrator.json` en el git dir común solo se usa para sincronizar la ruta “gestionada” si existía en versiones anteriores (mover/borrar); ya no se rellena al arrancar.
+- **Estado opcional**: `topoductor.json` en el git dir común solo se usa para sincronizar la ruta “gestionada” si existía en versiones anteriores (mover/borrar); ya no se rellena al arrancar.
 
 ## Stack
 
@@ -18,7 +18,7 @@ Comportamiento implementado:
 - **Lip Gloss** — estilos de la UI.
 - **Bubbles** — `key` para mapas de teclas (`tui/keys.go`).
 
-Módulo: `github.com/macpro/git-worktree-orchestrator`.
+Módulo: `github.com/macpro/topoductor`.
 
 ## Arquitectura (vertical slice + puertos)
 
@@ -54,7 +54,7 @@ go run .
 Para compilar un binario:
 
 ```bash
-go build -o git-worktree-orchestrator .
+go build -o topoductor .
 ```
 
 ## Pruebas

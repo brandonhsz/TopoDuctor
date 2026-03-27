@@ -1,4 +1,4 @@
-module github.com/macpro/git-worktree-orchestrator
+module github.com/macpro/topoductor
 
 go 1.26.1
 

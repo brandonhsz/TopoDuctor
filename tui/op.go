@@ -4,7 +4,7 @@ import (
 	"errors"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/macpro/git-worktree-orchestrator/internal/worktree"
+	"github.com/macpro/topoductor/internal/worktree"
 )
 
 // refreshDoneMsg follows a list reload (after create / rename / remove).

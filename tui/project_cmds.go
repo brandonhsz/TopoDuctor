@@ -2,8 +2,8 @@ package tui
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/macpro/git-worktree-orchestrator/internal/projects"
-	"github.com/macpro/git-worktree-orchestrator/internal/worktree"
+	"github.com/macpro/topoductor/internal/projects"
+	"github.com/macpro/topoductor/internal/worktree"
 )
 
 // loadDoneMsg carries the result of listing worktrees for the active project.

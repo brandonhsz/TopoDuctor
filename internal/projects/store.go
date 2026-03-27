@@ -14,13 +14,13 @@ type File struct {
 	PreferredBranches map[string][]string `json:"preferred_branches,omitempty"`
 }
 
-// DefaultConfigPath returns ~/.config/git-worktree-orchestrator/projects.json (OS-aware).
+// DefaultConfigPath returns ~/.config/topoductor/projects.json (OS-aware).
 func DefaultConfigPath() (string, error) {
 	d, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(d, "git-worktree-orchestrator")
+	dir := filepath.Join(d, "topoductor")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}

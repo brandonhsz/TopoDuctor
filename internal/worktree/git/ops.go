@@ -37,7 +37,7 @@ func SanitizeWorktreeLabel(s string) string {
 	return strings.Trim(out, "-")
 }
 
-// AddUserWorktree crea el worktree en ~/.topoOrchestrator/projects/<proyecto>/worktree/<label>
+// AddUserWorktree crea el worktree en ~/.topoDuctor/projects/<proyecto>/worktree/<label>
 // (rama <label> sanitizada) desde baseRef.
 func (r Runner) AddUserWorktree(baseRef, label string) error {
 	return r.addUserWith(execRunner{}, baseRef, label)
@@ -147,7 +147,7 @@ func (r Runner) removeWith(git GitCommandRunner, path string) error {
 }
 
 func syncManagedPath(commonGit, oldPath, newPath string) error {
-	statePath := filepath.Join(commonGit, "worktree-orchestrator.json")
+	statePath := filepath.Join(commonGit, "topoductor.json")
 	st, err := readState(statePath)
 	if err != nil {
 		return nil
@@ -160,7 +160,7 @@ func syncManagedPath(commonGit, oldPath, newPath string) error {
 }
 
 func clearManagedIfMatches(commonGit, path string) {
-	statePath := filepath.Join(commonGit, "worktree-orchestrator.json")
+	statePath := filepath.Join(commonGit, "topoductor.json")
 	st, err := readState(statePath)
 	if err != nil {
 		return

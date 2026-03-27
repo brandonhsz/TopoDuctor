@@ -1,7 +1,7 @@
 package git
 
 import (
-	"github.com/macpro/git-worktree-orchestrator/internal/worktree"
+	"github.com/macpro/topoductor/internal/worktree"
 )
 
 // Adapter implements worktree.Service using the git CLI (Runner).

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/macpro/git-worktree-orchestrator/internal/worktree"
+	"github.com/macpro/topoductor/internal/worktree"
 )
 
 func TestParsePorcelain(t *testing.T) {

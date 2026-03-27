@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/macpro/git-worktree-orchestrator/internal/projects"
+	"github.com/macpro/topoductor/internal/projects"
 )
 
 // createBranchVisible es cuántas filas de ramas se muestran a la vez (ventana con scroll).

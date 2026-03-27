@@ -7,14 +7,14 @@ import (
 	"path/filepath"
 )
 
-const topoOrchestratorDir = ".topoOrchestrator"
+const topoDuctorDir = ".topoDuctor"
 
-func topoOrchestratorRoot() (string, error) {
+func topoDuctorRoot() (string, error) {
 	h, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(h, topoOrchestratorDir), nil
+	return filepath.Join(h, topoDuctorDir), nil
 }
 
 // projectSegmentName carpeta bajo projects/ a partir de la ruta del repo (única por clone).
@@ -29,9 +29,9 @@ func projectSegmentName(repoTop string) string {
 	return slug + "-" + short
 }
 
-// checkoutPathForNewWorktree devuelve ~/.topoOrchestrator/projects/<segmento>/worktree/<wtSlug>.
+// checkoutPathForNewWorktree devuelve ~/.topoDuctor/projects/<segmento>/worktree/<wtSlug>.
 func checkoutPathForNewWorktree(repoTop, wtSlug string) (string, error) {
-	root, err := topoOrchestratorRoot()
+	root, err := topoDuctorRoot()
 	if err != nil {
 		return "", err
 	}

@@ -12,8 +12,8 @@ import (
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
-	wtgit "github.com/macpro/git-worktree-orchestrator/internal/worktree/git"
-	"github.com/macpro/git-worktree-orchestrator/tui"
+	wtgit "github.com/macpro/topoductor/internal/worktree/git"
+	"github.com/macpro/topoductor/tui"
 )
 
 func main() {
