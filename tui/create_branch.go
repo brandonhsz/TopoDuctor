@@ -94,7 +94,7 @@ func (m Model) updateCreateBranchSelect(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.resetCreateBranchState()
 		m.marqueeTick = 0
 		return m, m.marqueeCmd()
-	case "ctrl+c", "q":
+	case "q":
 		m.quitting = true
 		return m, tea.Quit
 	case "enter":

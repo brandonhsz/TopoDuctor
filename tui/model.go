@@ -77,6 +77,7 @@ type Model struct {
 	termW            int
 	termH            int
 	marqueeTick      int
+	settingsOpen     bool
 }
 
 // New builds a Model. factory creates worktree.Service por repo; seedCwd es el cwd al arrancar (para lobby vs proyecto).
@@ -175,7 +176,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.createBranchFilter.Focus()
 
 	case marqueeTickMsg:
-		if m.mode != modeList || m.quitting || len(m.worktrees) == 0 {
+		if m.mode != modeList || m.quitting || len(m.worktrees) == 0 || m.settingsOpen || m.modalMenuOpen() {
 			return m, nil
 		}
 		if !m.selectedNeedsMarquee() {
@@ -185,9 +186,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.marqueeCmd()
 
 	case tea.KeyMsg:
+		if m.settingsOpen {
+			switch msg.String() {
+			case "esc", "ctrl+c":
+				m.settingsOpen = false
+				return m, m.afterSettingsCloseCmd()
+			}
+			return m, nil
+		}
+
 		if m.loading || m.loadErr != "" {
 			switch msg.String() {
-			case "ctrl+c", "q":
+			case "ctrl+c":
+				m.settingsOpen = true
+				return m, nil
+			case "q":
 				m.quitting = true
 				return m, tea.Quit
 			}
@@ -202,10 +215,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.goToLobby()
 		}
 
+		if msg.String() == "ctrl+c" {
+			m.settingsOpen = true
+			return m, nil
+		}
+
 		switch m.mode {
 		case modeLobby:
 			switch msg.String() {
-			case "ctrl+c", "q":
+			case "q":
 				m.quitting = true
 				return m, tea.Quit
 			case "p", "enter":
@@ -345,7 +363,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.banner = ""
 					m.marqueeTick = 0
 					return m, m.marqueeCmd()
-				case "ctrl+c", "q":
+				case "q":
 					m.quitting = true
 					return m, tea.Quit
 				case "up", "k":
@@ -377,7 +395,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.banner = ""
 				m.marqueeTick = 0
 				return m, m.marqueeCmd()
-			case "ctrl+c", "q":
+			case "q":
 				m.quitting = true
 				return m, tea.Quit
 			case "up", "k":
@@ -477,9 +495,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// modeList
 		switch msg.String() {
-		case "ctrl+c":
-			m.quitting = true
-			return m, tea.Quit
 		case "q":
 			m.quitting = true
 			return m, tea.Quit
@@ -691,6 +706,9 @@ func (m Model) selectedNeedsMarquee() bool {
 }
 
 func (m Model) marqueeCmd() tea.Cmd {
+	if m.settingsOpen || m.modalMenuOpen() {
+		return nil
+	}
 	if m.mode != modeList || m.quitting || len(m.worktrees) == 0 {
 		return nil
 	}
@@ -770,7 +788,8 @@ func (m Model) renderWorktreeGrid() string {
 				cells = append(cells, placeholder)
 				continue
 			}
-			selGrid := m.mode == modeList || m.mode == modeExitAction
+			// Keep worktree selection visible under any modal (proyectos, ramas, crear, etc.).
+			selGrid := !m.loading && m.loadErr == "" && (m.mode == modeList || m.modalMenuOpen())
 			cells = append(cells, m.renderWTCard(wts[idx], idx == m.cursor && selGrid))
 		}
 		rows = append(rows, joinRowTop(cells))
@@ -899,7 +918,7 @@ func (m Model) renderExitActionBlock() string {
 		sb.WriteString(m.exitCustomCmdInput.View())
 		sb.WriteString("\n")
 	}
-	sb.WriteString(m.styles.Muted.Render("enter confirmar · esc volver · q salir (cd)"))
+	sb.WriteString(m.styles.Muted.Render("enter confirmar · esc volver · ctrl+c config · q salir (cd)"))
 	return sb.String()
 }
 
@@ -1056,10 +1075,19 @@ func (m Model) View() string {
 	main := lipgloss.Place(
 		w, contentH,
 		lipgloss.Center, lipgloss.Center,
-		m.renderPanel(),
+		m.renderBackdropContent(),
 		lipgloss.WithWhitespaceChars(" "),
 	)
-	return lipgloss.JoinVertical(lipgloss.Left, top, main)
+	base := lipgloss.JoinVertical(lipgloss.Left, top, main)
+	if !m.hasOverlay() {
+		return base
+	}
+	dim := lipgloss.NewStyle().Faint(true).Render(base)
+	return overlayModalCenter(dim, m.renderActiveModal(), w, h)
+}
+
+func (m Model) afterSettingsCloseCmd() tea.Cmd {
+	return m.marqueeCmd()
 }
 
 // renderVersionTopBar is one full terminal-width line, version right-aligned (not inside the centered panel).
@@ -1171,126 +1199,10 @@ func (m Model) renderLobbyPanel() string {
 		sb.WriteString("\n")
 	}
 	sb.WriteString("\n")
-	sb.WriteString(m.renderAppStatusBar(w, "p / enter proyectos · q salir"))
-	return sb.String()
-}
-
-func (m Model) renderPanel() string {
-	if m.mode == modeLobby {
-		return m.renderLobbyPanel()
+	hint := "p / enter proyectos · ctrl+c config · q salir"
+	if m.hasOverlay() {
+		hint = "esc volver · ctrl+c config · q salir"
 	}
-
-	var sb strings.Builder
-
-	cols := m.gridCols()
-	panelW := gridTotalWidth(cols)
-	sb.WriteString(m.renderAppHeader(panelW))
-	sb.WriteString("\n")
-	sb.WriteString(m.renderProjectStripWide(panelW))
-	sb.WriteString("\n\n")
-
-	if m.loading {
-		sb.WriteString(m.styles.Message.Render("Cargando worktrees…"))
-		sb.WriteString("\n\n")
-		sb.WriteString(m.renderAppStatusBar(panelW, "q salir"))
-		return sb.String()
-	}
-
-	if m.loadErr != "" {
-		sb.WriteString(m.styles.Error.Width(panelW - 4).Render(m.loadErr))
-		sb.WriteString("\n\n")
-		sb.WriteString(m.renderAppStatusBar(panelW, "q salir"))
-		return sb.String()
-	}
-
-	if m.busy {
-		sb.WriteString(m.styles.Message.Render("Ejecutando operación git…"))
-		sb.WriteString("\n\n")
-	}
-
-	sb.WriteString(m.renderWorktreeGrid())
-	sb.WriteString("\n")
-
-	switch m.mode {
-	case modeExitAction:
-		sb.WriteString("\n")
-		sb.WriteString(m.styles.Muted.Render(truncateRunes(m.SelectedPath, 72)))
-		sb.WriteString("\n")
-		sb.WriteString(m.renderExitActionBlock())
-		sb.WriteString("\n")
-	case modeCreate:
-		sb.WriteString("\n")
-		if m.createStep == 0 {
-			sb.WriteString(m.renderCreateBranchPickerBlock())
-			sb.WriteString("\n")
-		} else {
-			sb.WriteString(m.styles.Muted.Render("Se creará en ~/.topoDuctor/projects/<proyecto>/worktree/<nombre>"))
-			sb.WriteString("\n")
-			sb.WriteString(m.styles.Prompt.Render("Nombre de rama y carpeta del worktree"))
-			sb.WriteString("\n")
-			sb.WriteString(m.nameInput.View())
-			sb.WriteString("\n")
-			sb.WriteString(m.styles.Muted.Render("enter crear · esc volver al paso anterior"))
-		}
-		sb.WriteString("\n")
-	case modeRename:
-		sb.WriteString("\n")
-		sb.WriteString(m.styles.Prompt.Render("Renombrar carpeta del worktree"))
-		sb.WriteString("\n")
-		sb.WriteString(m.nameInput.View())
-		sb.WriteString("\n")
-		sb.WriteString(m.styles.Muted.Render("enter aplicar · esc cancelar"))
-		sb.WriteString("\n")
-	case modeDeleteConfirm:
-		sb.WriteString("\n")
-		sb.WriteString(m.styles.Error.Render("¿Eliminar este worktree? (git worktree remove)"))
-		sb.WriteString("\n")
-		sb.WriteString(m.styles.Muted.Render(m.deleteTargetPath))
-		sb.WriteString("\n")
-		sb.WriteString(m.styles.Muted.Render("y/enter sí · n/esc no"))
-		sb.WriteString("\n")
-	case modeProjectPicker:
-		sb.WriteString("\n")
-		sb.WriteString(m.styles.Prompt.Render("Proyectos (repositorios)"))
-		sb.WriteString("\n")
-		sb.WriteString(m.renderProjectPickerList())
-		sb.WriteString("\n")
-		sb.WriteString(m.styles.Muted.Render("enter activar · a añadir · b ramas preferidas · d quitar · esc volver"))
-		sb.WriteString("\n")
-	case modeAddProjectPath:
-		sb.WriteString("\n")
-		sb.WriteString(m.styles.Prompt.Render("Ruta del repositorio git"))
-		sb.WriteString("\n")
-		sb.WriteString(m.projPathInput.View())
-		sb.WriteString("\n")
-		sb.WriteString(m.styles.Muted.Render("enter añadir · esc cancelar"))
-		sb.WriteString("\n")
-	case modeBranchPrefs:
-		sb.WriteString("\n")
-		sb.WriteString(m.styles.Prompt.Render("Ramas preferidas (salen primero al elegir rama base)"))
-		sb.WriteString("\n")
-		sb.WriteString(m.styles.Muted.Render(m.branchPrefsForPath))
-		sb.WriteString("\n\n")
-		for i := 0; i < 3; i++ {
-			sb.WriteString(m.branchPrefInputs[i].View())
-			sb.WriteString("\n")
-		}
-		sb.WriteString(m.styles.Muted.Render("tab cambiar campo · enter guardar · esc volver"))
-		sb.WriteString("\n")
-	default:
-		sb.WriteString("\n")
-	}
-
-	if m.banner != "" {
-		sb.WriteString(m.styles.Error.Render(m.banner))
-		sb.WriteString("\n")
-	}
-
-	hints := "↑↓←→ / hjkl · enter elegir salida · p proyectos · ctrl+l lobby · b ramas · n · r · d · q salir"
-	if m.mode == modeExitAction {
-		hints = "↑↓ opción · enter confirmar · esc volver · ctrl+l lobby · q salir (cd por defecto)"
-	}
-	sb.WriteString(m.renderAppStatusBar(panelW, hints))
-
+	sb.WriteString(m.renderAppStatusBar(w, hint))
 	return sb.String()
 }

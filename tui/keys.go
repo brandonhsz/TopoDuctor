@@ -41,7 +41,7 @@ func DefaultKeyMap() KeyMap {
 			key.WithHelp("d", "delete worktree"),
 		),
 		Quit: key.NewBinding(
-			key.WithKeys("q", "ctrl+c"),
+			key.WithKeys("q"),
 			key.WithHelp("q", "quit"),
 		),
 	}
