@@ -246,7 +246,7 @@ func (m Model) renderSettingsModal() string {
 	case m.settingsUpdateChecking:
 		b.WriteString(m.styles.Message.Render("Comprobando la última versión en GitHub…"))
 	case m.settingsUpdateApplying:
-		b.WriteString(m.styles.Message.Render("Actualizando con Homebrew (puede tardar unos minutos)…"))
+		b.WriteString(m.styles.Message.Render("Ejecutando brew update y brew upgrade --cask topoductor (puede tardar varios minutos)…"))
 	default:
 		if m.settingsUpdateErr != "" {
 			b.WriteString(m.styles.Error.Render(m.settingsUpdateErr))
@@ -265,7 +265,7 @@ func (m Model) renderSettingsModal() string {
 	b.WriteString(m.styles.Muted.Render("u · comprobar actualizaciones"))
 	b.WriteString("\n")
 	if m.settingsHasNewer && runtime.GOOS == "darwin" && !m.settingsUpdateApplying {
-		b.WriteString(m.styles.Muted.Render("i · instalar con Homebrew (brew upgrade --cask topoductor)"))
+		b.WriteString(m.styles.Muted.Render("i · actualizar con Homebrew (brew update + brew upgrade --cask topoductor)"))
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
