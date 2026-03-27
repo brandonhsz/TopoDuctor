@@ -2,8 +2,10 @@ package tui
 
 import (
 	"errors"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/macpro/topoductor/internal/projects"
 	"github.com/macpro/topoductor/internal/worktree"
 )
 
@@ -65,8 +67,13 @@ func moveWorktreeCmd(svc worktree.Service, oldPath, newBasename string) tea.Cmd 
 	}
 }
 
-func removeWorktreeCmd(svc worktree.Service, path string) tea.Cmd {
+func removeWorktreeCmd(svc worktree.Service, path, preArchiveScript string) tea.Cmd {
 	return func() tea.Msg {
+		if s := strings.TrimSpace(preArchiveScript); s != "" {
+			if err := projects.RunScriptInDir(path, s); err != nil {
+				return refreshDoneMsg{err: err}
+			}
+		}
 		if err := svc.RemoveWorktree(path); err != nil {
 			return refreshDoneMsg{err: err}
 		}
