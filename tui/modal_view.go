@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"runtime"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -196,12 +197,44 @@ func (m Model) renderActiveModal() string {
 	}
 }
 
-// renderSettingsModal draws the configuration placeholder modal.
+// renderSettingsModal draws the configuration modal (version check / Homebrew update on macOS).
 func (m Model) renderSettingsModal() string {
-	body := lipgloss.JoinVertical(lipgloss.Left,
-		m.styles.Muted.Render("Por ahora solo un marcador de lugar."),
-		"",
-		m.styles.Muted.Render("esc o ctrl+c · cerrar"),
-	)
-	return m.wrapModal("Configuración", body)
+	var b strings.Builder
+	ver := strings.TrimSpace(m.version)
+	if ver == "" {
+		ver = "dev"
+	}
+	b.WriteString(m.styles.Muted.Render("Versión local: " + ver))
+	b.WriteString("\n\n")
+
+	switch {
+	case m.settingsUpdateChecking:
+		b.WriteString(m.styles.Message.Render("Comprobando la última versión en GitHub…"))
+	case m.settingsUpdateApplying:
+		b.WriteString(m.styles.Message.Render("Actualizando con Homebrew (puede tardar unos minutos)…"))
+	default:
+		if m.settingsUpdateErr != "" {
+			b.WriteString(m.styles.Error.Render(m.settingsUpdateErr))
+			b.WriteString("\n\n")
+		}
+		if m.settingsUpdateNotice != "" {
+			b.WriteString(m.styles.Message.Render(m.settingsUpdateNotice))
+			b.WriteString("\n\n")
+		}
+		if m.settingsReleaseURL != "" && m.settingsHasNewer {
+			b.WriteString(m.styles.Muted.Render(truncateRunes(m.settingsReleaseURL, 68)))
+			b.WriteString("\n\n")
+		}
+	}
+
+	b.WriteString(m.styles.Muted.Render("u · comprobar actualizaciones"))
+	b.WriteString("\n")
+	if m.settingsHasNewer && runtime.GOOS == "darwin" && !m.settingsUpdateApplying {
+		b.WriteString(m.styles.Muted.Render("i · instalar con Homebrew (brew upgrade --cask topoductor)"))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(m.styles.Muted.Render("esc o ctrl+c · cerrar"))
+
+	return m.wrapModal("Configuración", b.String())
 }

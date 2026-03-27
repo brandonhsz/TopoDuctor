@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/macpro/topoductor/internal/projects"
+	"github.com/macpro/topoductor/internal/update"
 	"github.com/macpro/topoductor/internal/worktree"
 )
 
@@ -78,6 +80,27 @@ type Model struct {
 	termH            int
 	marqueeTick      int
 	settingsOpen     bool
+	// Campos del modal Configuración (comprobar / instalar actualización).
+	settingsUpdateChecking bool
+	settingsUpdateApplying bool
+	settingsUpdateErr      string
+	settingsUpdateNotice   string
+	settingsLatestRelease  string
+	settingsReleaseURL     string
+	settingsHasNewer       bool
+}
+
+// withSettingsOpened abre Configuración y limpia el estado del chequeo de versiones.
+func (m Model) withSettingsOpened() Model {
+	m.settingsOpen = true
+	m.settingsUpdateChecking = false
+	m.settingsUpdateApplying = false
+	m.settingsUpdateErr = ""
+	m.settingsUpdateNotice = ""
+	m.settingsLatestRelease = ""
+	m.settingsReleaseURL = ""
+	m.settingsHasNewer = false
+	return m
 }
 
 // New builds a Model. factory creates worktree.Service por repo; seedCwd es el cwd al arrancar (para lobby vs proyecto).
@@ -175,6 +198,52 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.createBranchScroll = 0
 		return m, m.createBranchFilter.Focus()
 
+	case updateCheckDoneMsg:
+		if !m.settingsOpen {
+			return m, nil
+		}
+		m.settingsUpdateChecking = false
+		if msg.err != nil {
+			m.settingsUpdateErr = msg.err.Error()
+			m.settingsUpdateNotice = ""
+			m.settingsLatestRelease = ""
+			m.settingsReleaseURL = ""
+			m.settingsHasNewer = false
+			return m, nil
+		}
+		m.settingsUpdateErr = ""
+		m.settingsLatestRelease = msg.release.Tag
+		m.settingsReleaseURL = msg.release.URL
+		m.settingsHasNewer = update.IsNewer(m.version, msg.release.Tag)
+		if m.settingsHasNewer {
+			if runtime.GOOS == "darwin" {
+				m.settingsUpdateNotice = "Hay una versión más reciente. Pulsa i para ejecutar brew upgrade --cask topoductor."
+			} else {
+				m.settingsUpdateNotice = "Hay una versión más reciente. Descarga el binario desde GitHub (enlace abajo)."
+			}
+		} else {
+			mv := strings.TrimSpace(m.version)
+			if mv == "" {
+				mv = "dev"
+			}
+			m.settingsUpdateNotice = "Estás al día. Local: " + mv + " · Release: " + msg.release.Tag
+		}
+		return m, nil
+
+	case updateApplyDoneMsg:
+		if !m.settingsOpen {
+			return m, nil
+		}
+		m.settingsUpdateApplying = false
+		if msg.err != nil {
+			m.settingsUpdateErr = msg.err.Error()
+			return m, nil
+		}
+		m.settingsUpdateErr = ""
+		m.settingsUpdateNotice = "Homebrew terminó. Cierra esta app y vuelve a abrirla para usar la nueva versión."
+		m.settingsHasNewer = false
+		return m, nil
+
 	case marqueeTickMsg:
 		if m.mode != modeList || m.quitting || len(m.worktrees) == 0 || m.settingsOpen || m.modalMenuOpen() {
 			return m, nil
@@ -187,10 +256,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		if m.settingsOpen {
+			if m.settingsUpdateChecking || m.settingsUpdateApplying {
+				switch msg.String() {
+				case "esc", "ctrl+c":
+					m.settingsOpen = false
+					m.settingsUpdateChecking = false
+					m.settingsUpdateApplying = false
+					return m, m.afterSettingsCloseCmd()
+				}
+				return m, nil
+			}
 			switch msg.String() {
 			case "esc", "ctrl+c":
 				m.settingsOpen = false
 				return m, m.afterSettingsCloseCmd()
+			case "u":
+				m.settingsUpdateErr = ""
+				m.settingsUpdateNotice = ""
+				m.settingsLatestRelease = ""
+				m.settingsReleaseURL = ""
+				m.settingsHasNewer = false
+				m.settingsUpdateChecking = true
+				return m, checkUpdateCmd()
+			case "i":
+				if !m.settingsHasNewer {
+					return m, nil
+				}
+				if runtime.GOOS != "darwin" {
+					m.settingsUpdateErr = "La instalación con Homebrew solo está disponible en macOS."
+					return m, nil
+				}
+				m.settingsUpdateErr = ""
+				m.settingsUpdateNotice = ""
+				m.settingsUpdateApplying = true
+				return m, brewUpgradeTopoductorCmd()
 			}
 			return m, nil
 		}
@@ -198,7 +297,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.loading || m.loadErr != "" {
 			switch msg.String() {
 			case "ctrl+c":
-				m.settingsOpen = true
+				m = m.withSettingsOpened()
 				return m, nil
 			case "q":
 				m.quitting = true
@@ -216,7 +315,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if msg.String() == "ctrl+c" {
-			m.settingsOpen = true
+			m = m.withSettingsOpened()
 			return m, nil
 		}
 
