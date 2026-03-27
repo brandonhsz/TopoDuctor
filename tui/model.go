@@ -230,7 +230,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.settingsHasNewer = update.IsNewer(m.version, msg.release.Tag)
 		if m.settingsHasNewer {
 			if runtime.GOOS == "darwin" {
-				m.settingsUpdateNotice = "Hay una versión más reciente. Pulsa i para ejecutar brew upgrade --cask topoductor."
+				m.settingsUpdateNotice = "Hay una versión más reciente. Pulsa i para ejecutar brew update y brew upgrade --cask topoductor."
 			} else {
 				m.settingsUpdateNotice = "Hay una versión más reciente. Descarga el binario desde GitHub (enlace abajo)."
 			}
