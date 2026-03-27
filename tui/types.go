@@ -12,4 +12,7 @@ const (
 	modeBranchPrefs
 	modeExitAction
 	modeLobby
+	modeArchiveScriptConfirm
+	modeProjectScripts
+	modeScriptRun
 )

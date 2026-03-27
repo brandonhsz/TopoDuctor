@@ -88,6 +88,19 @@ type Model struct {
 	settingsLatestRelease  string
 	settingsReleaseURL     string
 	settingsHasNewer       bool
+	// Scripts (.topoductor/project.json): confirmación antes de archive manual.
+	scriptArchiveTarget string
+	scriptArchiveLine   string
+	scriptEditInputs    [3]textinput.Model
+	scriptEditFocus     int
+	scriptEditLoadErr   string
+	scriptRunTitle      string
+	scriptRunWorkDir    string
+	scriptRunCommand    string
+	scriptRunLoading    bool
+	scriptRunOutput     string
+	scriptRunErr        string
+	scriptRunScroll     int
 }
 
 // withSettingsOpened abre Configuración y limpia el estado del chequeo de versiones.
@@ -242,6 +255,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.settingsUpdateErr = ""
 		m.settingsUpdateNotice = "Homebrew terminó. Cierra esta app y vuelve a abrirla para usar la nueva versión."
 		m.settingsHasNewer = false
+		return m, nil
+
+	case scriptRunDoneMsg:
+		if m.mode != modeScriptRun {
+			return m, nil
+		}
+		m.scriptRunLoading = false
+		m.scriptRunOutput = msg.output
+		if msg.err != nil {
+			m.scriptRunErr = msg.err.Error()
+		} else {
+			m.scriptRunErr = ""
+		}
+		m.scriptRunScroll = 0
 		return m, nil
 
 	case marqueeTickMsg:
@@ -587,9 +614,94 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.deleteTargetPath = ""
 				m.mode = modeList
 				m.busy = true
-				return m, removeWorktreeCmd(m.svc, p)
+				var archiveLine string
+				if m.activeProject != "" {
+					if sc, err := projects.ReadProjectConfig(m.activeProject); err == nil {
+						archiveLine = sc.Archive
+					}
+				}
+				return m, removeWorktreeCmd(m.svc, p, archiveLine)
 			}
 			return m, nil
+
+		case modeArchiveScriptConfirm:
+			switch msg.String() {
+			case "n", "esc":
+				m.mode = modeList
+				m.scriptArchiveTarget = ""
+				m.scriptArchiveLine = ""
+				m.marqueeTick = 0
+				return m, m.marqueeCmd()
+			case "y", "enter":
+				target := m.scriptArchiveTarget
+				line := m.scriptArchiveLine
+				m.scriptArchiveTarget = ""
+				m.scriptArchiveLine = ""
+				m.marqueeTick = 0
+				return m.startScriptRunModal("Archive", target, line)
+			}
+			return m, nil
+
+		case modeScriptRun:
+			switch msg.String() {
+			case "esc", "enter":
+				if m.scriptRunLoading {
+					return m, nil
+				}
+				m.closeScriptRunModal()
+				m.marqueeTick = 0
+				return m, m.marqueeCmd()
+			case "up", "k":
+				if m.scriptRunLoading || m.scriptRunOutput == "" {
+					return m, nil
+				}
+				if m.scriptRunScroll > 0 {
+					m.scriptRunScroll--
+				}
+				return m, nil
+			case "down", "j":
+				if m.scriptRunLoading || m.scriptRunOutput == "" {
+					return m, nil
+				}
+				lines := scriptRunNormalizedLines(m.scriptRunOutput)
+				maxScroll := scriptRunMaxScroll(len(lines))
+				if m.scriptRunScroll < maxScroll {
+					m.scriptRunScroll++
+				}
+				return m, nil
+			}
+			return m, nil
+
+		case modeProjectScripts:
+			switch msg.String() {
+			case "esc":
+				m.mode = modeList
+				m.scriptEditLoadErr = ""
+				m.banner = ""
+				m.marqueeTick = 0
+				return m, m.marqueeCmd()
+			case "enter":
+				if err := m.saveProjectScripts(); err != nil {
+					m.banner = err.Error()
+					return m, nil
+				}
+				m.scriptEditLoadErr = ""
+				m.banner = "Guardado en .topoductor/project.json"
+				m.mode = modeList
+				m.marqueeTick = 0
+				return m, m.marqueeCmd()
+			case "tab":
+				m.scriptEditFocus = (m.scriptEditFocus + 1) % 3
+				for i := range m.scriptEditInputs {
+					if i != m.scriptEditFocus {
+						m.scriptEditInputs[i].Blur()
+					}
+				}
+				return m, m.scriptEditInputs[m.scriptEditFocus].Focus()
+			}
+			var cmd tea.Cmd
+			m.scriptEditInputs[m.scriptEditFocus], cmd = m.scriptEditInputs[m.scriptEditFocus].Update(msg)
+			return m, cmd
 		}
 
 		// modeList
@@ -609,6 +721,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m.openBranchPrefsForPath(m.activeProject)
+		case "e":
+			if m.activeProject == "" {
+				m.banner = "Añade o activa un proyecto (p)."
+				return m, nil
+			}
+			return m.openProjectScriptsEditor()
 		case "n":
 			if m.svc == nil {
 				m.banner = "Añade un proyecto (p → a) antes de crear worktrees."
@@ -638,6 +756,57 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.nameInput.SetValue(filepath.Base(wt.Path))
 			m.nameInput.CursorEnd()
 			return m, m.nameInput.Focus()
+		case "i":
+			if len(m.worktrees) == 0 || m.activeProject == "" {
+				m.banner = "Activa un proyecto con worktrees (p)."
+				return m, nil
+			}
+			sc, err := projects.ReadProjectConfig(m.activeProject)
+			if err != nil {
+				m.banner = err.Error()
+				return m, nil
+			}
+			if strings.TrimSpace(sc.Setup) == "" {
+				m.banner = "No hay scripts.setup (.topoductor/project.json o editor e)."
+				return m, nil
+			}
+			m.banner = ""
+			return m.startScriptRunModal("Setup", m.worktrees[m.cursor].Path, sc.Setup)
+		case "g":
+			if len(m.worktrees) == 0 || m.activeProject == "" {
+				m.banner = "Activa un proyecto con worktrees (p)."
+				return m, nil
+			}
+			sc, err := projects.ReadProjectConfig(m.activeProject)
+			if err != nil {
+				m.banner = err.Error()
+				return m, nil
+			}
+			if strings.TrimSpace(sc.Run) == "" {
+				m.banner = "No hay scripts.run (.topoductor/project.json o editor e)."
+				return m, nil
+			}
+			m.banner = ""
+			return m.startScriptRunModal("Run", m.worktrees[m.cursor].Path, sc.Run)
+		case "z":
+			if len(m.worktrees) == 0 || m.activeProject == "" {
+				m.banner = "Activa un proyecto con worktrees (p)."
+				return m, nil
+			}
+			sc, err := projects.ReadProjectConfig(m.activeProject)
+			if err != nil {
+				m.banner = err.Error()
+				return m, nil
+			}
+			if strings.TrimSpace(sc.Archive) == "" {
+				m.banner = "No hay scripts.archive (.topoductor/project.json o editor e)."
+				return m, nil
+			}
+			m.mode = modeArchiveScriptConfirm
+			m.scriptArchiveTarget = m.worktrees[m.cursor].Path
+			m.scriptArchiveLine = sc.Archive
+			m.banner = ""
+			return m, nil
 		case "d":
 			if len(m.worktrees) <= 1 {
 				m.banner = "No se puede eliminar el único worktree."
@@ -984,7 +1153,110 @@ func (m Model) goToLobby() (Model, tea.Cmd) {
 	m.createBaseRef = ""
 	m.renameFromPath = ""
 	m.deleteTargetPath = ""
+	m.scriptArchiveTarget = ""
+	m.scriptArchiveLine = ""
+	m.scriptEditLoadErr = ""
+	m.closeScriptRunModal()
 	return m, nil
+}
+
+func (m *Model) closeScriptRunModal() {
+	wasScript := m.mode == modeScriptRun
+	m.scriptRunTitle = ""
+	m.scriptRunWorkDir = ""
+	m.scriptRunCommand = ""
+	m.scriptRunLoading = false
+	m.scriptRunOutput = ""
+	m.scriptRunErr = ""
+	m.scriptRunScroll = 0
+	if wasScript {
+		m.mode = modeList
+	}
+}
+
+const scriptRunVisibleLines = 14
+
+func scriptRunNormalizedLines(s string) []string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, "\n")
+}
+
+func scriptRunMaxScroll(lineCount int) int {
+	if lineCount <= scriptRunVisibleLines {
+		return 0
+	}
+	return lineCount - scriptRunVisibleLines
+}
+
+// startScriptRunModal abre el modal de ejecución y lanza el script en un tea.Cmd asíncrono.
+func (m Model) startScriptRunModal(title, workDir, scriptLine string) (Model, tea.Cmd) {
+	abs, err := filepath.Abs(workDir)
+	if err != nil {
+		m.banner = err.Error()
+		return m, nil
+	}
+	cmdLine := strings.TrimSpace(scriptLine)
+	m.mode = modeScriptRun
+	m.scriptRunTitle = title
+	m.scriptRunWorkDir = abs
+	m.scriptRunCommand = projects.ExpandScriptPlaceholders(cmdLine, abs)
+	m.scriptRunLoading = true
+	m.scriptRunOutput = ""
+	m.scriptRunErr = ""
+	m.scriptRunScroll = 0
+	m.banner = ""
+	return m, runProjectScriptAsyncCmd(abs, scriptLine)
+}
+
+func newScriptEditSlot(placeholder string) textinput.Model {
+	ti := textinput.New()
+	ti.Placeholder = placeholder
+	ti.CharLimit = 2048
+	ti.Width = 56
+	return ti
+}
+
+// openProjectScriptsEditor carga o crea la edición de .topoductor/project.json del proyecto activo.
+func (m Model) openProjectScriptsEditor() (Model, tea.Cmd) {
+	m.banner = ""
+	m.mode = modeProjectScripts
+	m.scriptEditFocus = 0
+	m.scriptEditLoadErr = ""
+	sc, err := projects.ReadProjectConfig(m.activeProject)
+	if err != nil {
+		m.scriptEditLoadErr = err.Error()
+		sc = projects.ProjectScripts{}
+	}
+	ph := []string{
+		"setup — p.ej. npm install (tecla i)",
+		"run — p.ej. npm run start (tecla g)",
+		"archive — p.ej. rm -rf node_modules (tecla z)",
+	}
+	for i := range m.scriptEditInputs {
+		m.scriptEditInputs[i] = newScriptEditSlot(ph[i])
+	}
+	m.scriptEditInputs[0].SetValue(sc.Setup)
+	m.scriptEditInputs[1].SetValue(sc.Run)
+	m.scriptEditInputs[2].SetValue(sc.Archive)
+	for i := range m.scriptEditInputs {
+		if i != 0 {
+			m.scriptEditInputs[i].Blur()
+		}
+	}
+	m.scriptEditInputs[0].CursorEnd()
+	return m, m.scriptEditInputs[0].Focus()
+}
+
+func (m *Model) saveProjectScripts() error {
+	s := projects.ProjectScripts{
+		Setup:   m.scriptEditInputs[0].Value(),
+		Run:     m.scriptEditInputs[1].Value(),
+		Archive: m.scriptEditInputs[2].Value(),
+	}
+	return projects.SaveProjectScripts(m.activeProject, s)
 }
 
 func newExitCustomInput() textinput.Model {

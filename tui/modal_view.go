@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"runtime"
 	"strings"
 
@@ -14,7 +15,7 @@ import (
 // modalMenuOpen is true when a menu is shown as a floating modal (not the main list grid).
 func (m Model) modalMenuOpen() bool {
 	switch m.mode {
-	case modeProjectPicker, modeAddProjectPath, modeBranchPrefs, modeExitAction, modeCreate, modeRename, modeDeleteConfirm:
+	case modeProjectPicker, modeAddProjectPath, modeBranchPrefs, modeExitAction, modeCreate, modeRename, modeDeleteConfirm, modeArchiveScriptConfirm, modeProjectScripts, modeScriptRun:
 		return true
 	default:
 		return false
@@ -78,7 +79,7 @@ func (m Model) hintsListBackdrop() string {
 	if m.hasOverlay() {
 		return "esc volver · ctrl+c config · q salir"
 	}
-	return "↑↓←→ / hjkl · enter elegir salida · p proyectos · ctrl+l lobby · ctrl+c config · b ramas · n · r · d · q salir"
+	return "↑↓←→ / hjkl · enter salida · p proyectos · e scripts · ctrl+l lobby · ctrl+c config · b ramas · i · g · z · n · r · d · q salir"
 }
 
 func (m Model) renderListBackdrop() string {
@@ -163,6 +164,17 @@ func (m Model) renderActiveModal() string {
 		sb.WriteString(m.styles.Muted.Render("y/enter sí · n/esc no"))
 		return m.wrapModal("Eliminar worktree", sb.String())
 
+	case modeArchiveScriptConfirm:
+		var sb strings.Builder
+		sb.WriteString(m.styles.Error.Render("¿Ejecutar scripts.archive en esta carpeta?"))
+		sb.WriteString("\n")
+		sb.WriteString(m.styles.Muted.Render(m.scriptArchiveTarget))
+		sb.WriteString("\n")
+		sb.WriteString(m.styles.Muted.Render(truncateRunes(m.scriptArchiveLine, 68)))
+		sb.WriteString("\n")
+		sb.WriteString(m.styles.Muted.Render("y/enter sí · n/esc no"))
+		return m.wrapModal("Script archive", sb.String())
+
 	case modeProjectPicker:
 		var sb strings.Builder
 		sb.WriteString(m.renderProjectPickerList())
@@ -191,6 +203,29 @@ func (m Model) renderActiveModal() string {
 		}
 		sb.WriteString(m.styles.Muted.Render("tab cambiar campo · enter guardar · esc volver"))
 		return m.wrapModal("Ramas preferidas", sb.String())
+
+	case modeProjectScripts:
+		var sb strings.Builder
+		sb.WriteString(m.styles.Muted.Render(truncateRunes(m.activeProject, 72)))
+		sb.WriteString("\n")
+		sb.WriteString(m.styles.Muted.Render(".topoductor/project.json · una línea por comando · {path} = ruta del worktree"))
+		sb.WriteString("\n\n")
+		if m.scriptEditLoadErr != "" {
+			sb.WriteString(m.styles.Error.Render(m.scriptEditLoadErr))
+			sb.WriteString("\n\n")
+		}
+		labels := []string{"scripts.setup (i)", "scripts.run (g)", "scripts.archive (z)"}
+		for i := 0; i < 3; i++ {
+			sb.WriteString(m.styles.Prompt.Render(labels[i]))
+			sb.WriteString("\n")
+			sb.WriteString(m.scriptEditInputs[i].View())
+			sb.WriteString("\n")
+		}
+		sb.WriteString(m.styles.Muted.Render("tab campo · enter guardar · esc volver · en la lista: i / g / z ejecutan en la tarjeta activa"))
+		return m.wrapModal("Scripts del proyecto", sb.String())
+
+	case modeScriptRun:
+		return m.wrapModal("Ejecutar script — "+m.scriptRunTitle, m.renderScriptRunBody())
 
 	default:
 		return ""
@@ -237,4 +272,74 @@ func (m Model) renderSettingsModal() string {
 	b.WriteString(m.styles.Muted.Render("esc o ctrl+c · cerrar"))
 
 	return m.wrapModal("Configuración", b.String())
+}
+
+func scriptRunVisibleSlice(output string, scroll int) []string {
+	lines := scriptRunNormalizedLines(output)
+	if len(lines) == 0 {
+		return nil
+	}
+	maxS := scriptRunMaxScroll(len(lines))
+	if scroll < 0 {
+		scroll = 0
+	}
+	if scroll > maxS {
+		scroll = maxS
+	}
+	end := scroll + scriptRunVisibleLines
+	if end > len(lines) {
+		end = len(lines)
+	}
+	return lines[scroll:end]
+}
+
+func (m Model) renderScriptRunBody() string {
+	colW := clampInt(m.modalMaxWidth()-4, 24, 72)
+	var sb strings.Builder
+	sb.WriteString(m.styles.Muted.Render(truncateRunes(m.scriptRunWorkDir, 68)))
+	sb.WriteString("\n")
+	sb.WriteString(m.styles.Muted.Render(truncateRunes(m.scriptRunCommand, 68)))
+	sb.WriteString("\n\n")
+
+	if m.scriptRunLoading {
+		sb.WriteString(m.styles.Message.Render("Ejecutando…"))
+		sb.WriteString("\n\n")
+		sb.WriteString(m.styles.Muted.Render("No puedes cerrar este modal hasta que termine el comando."))
+		return sb.String()
+	}
+
+	if m.scriptRunErr != "" {
+		sb.WriteString(m.styles.Error.Render(truncateRunes(m.scriptRunErr, colW)))
+		sb.WriteString("\n\n")
+	}
+
+	lines := scriptRunNormalizedLines(m.scriptRunOutput)
+	vis := scriptRunVisibleSlice(m.scriptRunOutput, m.scriptRunScroll)
+	if len(lines) == 0 {
+		sb.WriteString(m.styles.Muted.Render("(sin salida)"))
+		sb.WriteString("\n")
+	} else {
+		maxS := scriptRunMaxScroll(len(lines))
+		if maxS > 0 {
+			sb.WriteString(m.styles.Muted.Render(fmt.Sprintf(
+				"Salida (↑↓): %d–%d / %d líneas",
+				m.scriptRunScroll+1,
+				m.scriptRunScroll+len(vis),
+				len(lines),
+			)))
+			sb.WriteString("\n")
+		}
+		for _, ln := range vis {
+			sb.WriteString(m.styles.NormalItem.Render(truncateRunes(ln, colW)))
+			sb.WriteString("\n")
+		}
+	}
+
+	if m.scriptRunErr == "" {
+		sb.WriteString("\n")
+		sb.WriteString(m.styles.Message.Render("Listo."))
+	}
+	sb.WriteString("\n")
+	sb.WriteString(m.styles.Muted.Render("esc / enter cerrar · ↑↓ desplazar salida"))
+	return sb.String()
 }
