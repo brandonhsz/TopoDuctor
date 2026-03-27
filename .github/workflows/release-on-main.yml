@@ -1,0 +1,63 @@
+# Cada merge/push a main crea el siguiente tag semver (patch) si el commit aún no tiene tag.
+# El push del tag dispara el workflow «Release» (.github/workflows/release.yml) con GoReleaser.
+
+name: Tag release on main
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tag-release-main
+  cancel-in-progress: false
+
+jobs:
+  bump-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Skip if HEAD is already tagged
+        id: skip
+        run: |
+          if git describe --tags --exact-match HEAD 2>/dev/null
+          then
+            echo "exact=$(git describe --tags --exact-match HEAD)" >> "$GITHUB_OUTPUT"
+            echo "SKIP=true" >> "$GITHUB_ENV"
+          else
+            echo "SKIP=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Compute next patch version
+        if: env.SKIP == 'false'
+        id: next
+        run: |
+          set -euo pipefail
+          latest="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1 || true)"
+          if [ -z "$latest" ]; then
+            new="v0.1.0"
+          else
+            ver="${latest#v}"
+            major="$(echo "$ver" | cut -d. -f1)"
+            minor="$(echo "$ver" | cut -d. -f2)"
+            patch="$(echo "$ver" | cut -d. -f3)"
+            patch=$((patch + 1))
+            new="v${major}.${minor}.${patch}"
+          fi
+          echo "tag=$new" >> "$GITHUB_OUTPUT"
+          echo "Next release tag: $new (after $latest)"
+
+      - name: Create and push tag
+        if: env.SKIP == 'false'
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git tag -a "${{ steps.next.outputs.tag }}" -m "Release ${{ steps.next.outputs.tag }} (auto desde main)"
+          git push origin "${{ steps.next.outputs.tag }}"
