@@ -1,2 +1,5 @@
 # Artefactos locales (p. ej. binarios de prueba)
 /tmp/
+
+# Goreleaser (brew / releases)
+/dist/

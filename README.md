@@ -38,15 +38,33 @@ go install github.com/macpro/topoductor@latest
 
 (Adjust the module path if your fork or mirror uses a different import path.)
 
+### Homebrew (tap)
+
+After a [GoReleaser](https://goreleaser.com/) release (see `.goreleaser.yaml` and `.github/workflows/release.yml`):
+
+```bash
+brew tap brandonhsz/tap
+brew install --cask topoductor
+```
+
+**Maintainers — one-time setup**
+
+1. Repository [brandonhsz/homebrew-tap](https://github.com/brandonhsz/homebrew-tap) must exist (empty is fine).
+2. In **TopoDuctor** → *Settings* → *Secrets and variables* → *Actions*, add **`GORELEASER_GITHUB_TOKEN`**: a classic PAT with the **`repo`** scope, or a fine-grained token with **Contents: Read and write** on **`brandonhsz/TopoDuctor`** and **`brandonhsz/homebrew-tap`**. The default `GITHUB_TOKEN` in Actions cannot push to the tap repo; see [GoReleaser: resource not accessible](https://goreleaser.com/errors/resource-not-accessible-by-integration/).
+3. Push a version tag to run the release workflow, for example: `git tag v0.1.0 && git push origin v0.1.0`.
+
+If you fork the project, update `release.github` and `homebrew_casks.repository` in `.goreleaser.yaml` to match your GitHub owner and repo names.
+
 ## Usage
 
 ```text
-topoductor [-print-only]
+topoductor [-print-only] [-version]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `-print-only` | Does not `cd` or exec the shell: only prints the action to stdout (e.g. `cd "…"` or the Cursor command). Handy for `eval "$(topoductor -print-only)"` or scripts. |
+| `-version` | Prints the build version and exits (set at release time via GoReleaser `ldflags`). |
 
 You can run the binary **from any directory**; the current working directory only affects whether you see the **lobby** at startup or go straight to a project’s worktree list (see below).
 

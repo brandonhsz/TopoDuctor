@@ -16,9 +16,18 @@ import (
 	"github.com/macpro/topoductor/tui"
 )
 
+// Set at link time, e.g. -ldflags="-X main.version=v1.0.0" (Goreleaser sets this on release).
+var version = "dev"
+
 func main() {
 	printOnly := flag.Bool("print-only", false, "solo imprime el comando en stdout (útil: eval \"$(ruta/al/binario)\")")
+	showVersion := flag.Bool("version", false, "imprime la versión y sale")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(version)
+		return
+	}
 
 	wd, err := os.Getwd()
 	if err != nil {

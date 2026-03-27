@@ -1,0 +1,73 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# Release: tag v1.2.3, luego: goreleaser release
+# Prueba local sin publicar: goreleaser release --snapshot --clean
+#
+# Tap: github.com/brandonhsz/homebrew-tap — en CI hace falta el secret
+# GORELEASER_GITHUB_TOKEN (PAT con push a este repo y al tap). Ver:
+# https://goreleaser.com/errors/resource-not-accessible-by-integration/
+
+version: 2
+
+project_name: topoductor
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: topoductor
+    main: .
+    binary: topoductor
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: default
+    ids:
+      - topoductor
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: brandonhsz
+    name: TopoDuctor
+
+homebrew_casks:
+  - name: topoductor
+    ids:
+      - default
+    binaries:
+      - topoductor
+    repository:
+      owner: brandonhsz
+      name: homebrew-tap
+    homepage: "https://github.com/brandonhsz/TopoDuctor"
+    description: "Terminal UI for managing git worktrees"
+    commit_msg_template: "Brew cask update for {{ .ProjectName }} {{ .Tag }}"
+    dependencies:
+      - formula: git
+    # Binario sin firma de Apple: quita cuarentena en macOS para que ejecute.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/topoductor"]
+          end
