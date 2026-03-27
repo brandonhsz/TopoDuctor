@@ -50,7 +50,7 @@ brew install --cask topoductor
 **Maintainers — one-time setup**
 
 1. Repository [brandonhsz/homebrew-tap](https://github.com/brandonhsz/homebrew-tap) must exist (empty is fine).
-2. In **TopoDuctor** → *Settings* → *Secrets and variables* → *Actions*, add **`GORELEASER_GITHUB_TOKEN`**: a classic PAT with the **`repo`** scope, or a fine-grained token with **Contents: Read and write** on **`brandonhsz/TopoDuctor`** and **`brandonhsz/homebrew-tap`**. The default `GITHUB_TOKEN` in Actions cannot push to the tap repo; see [GoReleaser: resource not accessible](https://goreleaser.com/errors/resource-not-accessible-by-integration/).
+2. In **TopoDuctor** → *Settings* → *Secrets and variables* → *Actions*, add **`GORELEASER_GITHUB_TOKEN`**: a PAT used **only** to push the Homebrew cask to **`brandonhsz/homebrew-tap`** (fine-grained: **Contents: Read and write** on that repo only; or classic PAT with **`repo`** if you prefer). Creating the GitHub **Release** in TopoDuctor uses the workflow’s built-in `GITHUB_TOKEN`, so the PAT does not need access to TopoDuctor — that avoids `403 Resource not accessible` when the PAT was scoped only to the tap. See [GoReleaser: resource not accessible](https://goreleaser.com/errors/resource-not-accessible-by-integration/).
 3. Push a version tag to run the release workflow, for example: `git tag v0.1.0 && git push origin v0.1.0`.
 
 If you fork the project, update `release.github` and `homebrew_casks.repository` in `.goreleaser.yaml` to match your GitHub owner and repo names.

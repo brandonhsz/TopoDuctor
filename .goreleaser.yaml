@@ -2,9 +2,9 @@
 # Release: tag v1.2.3, luego: goreleaser release
 # Prueba local sin publicar: goreleaser release --snapshot --clean
 #
-# Tap: github.com/brandonhsz/homebrew-tap — en CI hace falta el secret
-# GORELEASER_GITHUB_TOKEN (PAT con push a este repo y al tap). Ver:
-# https://goreleaser.com/errors/resource-not-accessible-by-integration/
+# Release en GitHub usa GITHUB_TOKEN (p. ej. en Actions). El push al tap
+# homebrew-tap usa HOMEBREW_TAP_GITHUB_TOKEN (PAT con Contents: write solo en
+# ese repo). Ver: https://goreleaser.com/errors/resource-not-accessible-by-integration/
 
 version: 2
 
@@ -59,6 +59,7 @@ homebrew_casks:
     repository:
       owner: brandonhsz
       name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/brandonhsz/TopoDuctor"
     description: "Terminal UI for managing git worktrees"
     commit_msg_template: "Brew cask update for {{ .ProjectName }} {{ .Tag }}"

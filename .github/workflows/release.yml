@@ -29,6 +29,7 @@ jobs:
           version: "~> v2"
           args: release --clean
         env:
-          # PAT with repo access to this repo AND to brandonhsz/homebrew-tap (contents: write on both).
-          # The default GITHUB_TOKEN cannot push to another repository, so a personal access token is required.
-          GITHUB_TOKEN: ${{ secrets.GORELEASER_GITHUB_TOKEN }}
+          # Crear release y subir assets en ESTE repo (TopoDuctor). El PAT del usuario a veces da 403 aquí.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Push del cask a otro repo: PAT con Contents: write en brandonhsz/homebrew-tap (nombre del secret en Settings).
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.GORELEASER_GITHUB_TOKEN }}
