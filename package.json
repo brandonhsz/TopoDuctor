@@ -1,7 +1,24 @@
 {
   "name": "topoductor",
-  "version": "0.2.1",
+  "version": "0.2.2",
+  "description": "Terminal UI to manage git worktrees (Node.js + Ink)",
   "type": "module",
+  "keywords": [
+    "git",
+    "worktree",
+    "tui",
+    "cli",
+    "ink",
+    "terminal"
+  ],
+  "homepage": "https://github.com/brandonhsz/TopoDuctor#readme",
+  "bugs": {
+    "url": "https://github.com/brandonhsz/TopoDuctor/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/brandonhsz/TopoDuctor.git"
+  },
   "bin": {
     "topoductor": "dist/cli.js"
   },
