@@ -23,6 +23,8 @@ npm install -g topoductor
 
 También puedes publicar en local: `npm login` y `npm publish --access public`.
 
+Si el workflow **Publish npm** falló por autenticación, añade `NPM_TOKEN` y en GitHub Actions abre ese run y usa **Re-run failed jobs** (no hace falta un tag nuevo).
+
 Tras publicar, verifica el SHA del tarball frente a `Formula/topoductor.rb`:
 
 ```bash
