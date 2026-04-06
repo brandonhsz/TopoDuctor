@@ -8,8 +8,8 @@
 class Topoductor < Formula
   desc "Terminal UI for git worktrees"
   homepage "https://github.com/brandonhsz/TopoDuctor"
-  url "https://registry.npmjs.org/topoductor/-/topoductor-0.2.0.tgz"
-  sha256 "20de7fb1f064176b82ea9501686e1a3ff9e36c0487a878fe6d605ed600481cd9"
+  url "https://registry.npmjs.org/topoductor/-/topoductor-0.2.1.tgz"
+  sha256 "526722abb1ee099dfd83a4e2b9be17cde8650565230fbad3c1529491f51b70b8"
   license "MIT"
 
   depends_on "node"

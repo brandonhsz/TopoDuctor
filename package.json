@@ -1,9 +1,9 @@
 {
   "name": "topoductor",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "bin": {
-    "topoductor": "./dist/cli.js"
+    "topoductor": "dist/cli.js"
   },
   "files": [
     "dist"

@@ -24,7 +24,7 @@ brew install --formula ./Formula/topoductor.rb
 O desde una etiqueta en GitHub (sustituye el tag):
 
 ```bash
-brew install --formula https://raw.githubusercontent.com/brandonhsz/TopoDuctor/v0.2.0/Formula/topoductor.rb
+brew install --formula https://raw.githubusercontent.com/brandonhsz/TopoDuctor/v0.2.1/Formula/topoductor.rb
 ```
 
 Actualizar desde la TUI o la terminal: `brew update && brew upgrade topoductor` (sin `--cask`).
