@@ -1,142 +1,67 @@
 # TopoDuctor
 
-A terminal UI (TUI) for **managing [git worktrees](https://git-scm.com/docs/git-worktree)** with minimal friction: see what you have, create more, rename a checkout folder, remove them, and **switch context** on exit (for example `cd` into the chosen directory or open it in Cursor).
+TUI de terminal para **gestionar [git worktrees](https://git-scm.com/docs/git-worktree)**: listar, crear, renombrar, eliminar y **salir con contexto** (`cd`, Cursor o comando con `{path}`).
 
-## What it does
+Implementación actual: **Node.js + React Ink** (sin dependencia de Go).
 
-- **Lists** worktrees for the active repository using `git worktree list --porcelain`. It does not create any when you launch the app.
-- **Projects**: register multiple clone paths and switch between them without leaving the TUI. The list and active project are stored in a JSON file under the user config directory.
-- **Create** a new worktree (**n**): pick a base branch (or ref), then a name; a new branch is created and the checkout goes under `~/.topoDuctor/projects/...`.
-- **Rename** the selected worktree folder (**r**) and **delete** one (**d**), with confirmation on delete.
-- **Exit with a chosen worktree** (**Enter** on a card): run an interactive `cd`, open the folder in **Cursor**, or a **custom command** using the `{path}` placeholder.
+## Requisitos
 
-## Requirements
+- **Node.js** 20+ (recomendado 22)
+- **Git** en `PATH`
 
-- **Go** 1.26 or compatible (see `go.mod`).
-- **Git** installed and on `PATH`.
-- A terminal that supports the alternate screen (standard TUI mode).
+## Homebrew (macOS)
 
-## Installation
+La app es una **fórmula** de Homebrew que instala el paquete npm `topoductor` (CLI en Node). Ya no se usa cask ni binario Go.
 
-From the repository root:
+1. Publica la versión en npm (`npm publish`) cuando corresponda; el tarball incluye `dist/` vía `prepublishOnly`.
+2. Actualiza en `Formula/topoductor.rb` la URL del `.tgz` y el `sha256` del tarball **publicado** (el hash puede no coincidir con `npm pack` local; ver comentario en el archivo).
+3. Instalación desde el repo:
 
 ```bash
-go build -o topoductor .
+brew install --formula ./Formula/topoductor.rb
 ```
 
-Or run without a separate binary:
+O desde una etiqueta en GitHub (sustituye el tag):
 
 ```bash
-go run .
+brew install --formula https://raw.githubusercontent.com/brandonhsz/TopoDuctor/v0.0.1/Formula/topoductor.rb
 ```
 
-You can also install with `go install` if the module is available from a remote:
+Actualizar desde la TUI o la terminal: `brew update && brew upgrade topoductor` (sin `--cask`).
+
+## Uso
+
+Desde la raíz del repo:
 
 ```bash
-go install github.com/macpro/topoductor@latest
+npm install
+npm start
 ```
 
-(Adjust the module path if your fork or mirror uses a different import path.)
-
-### Homebrew (tap)
-
-After a [GoReleaser](https://goreleaser.com/) release (see `.goreleaser.yaml` and `.github/workflows/release.yml`):
+Flags:
 
 ```bash
-brew tap brandonhsz/tap
-brew install --cask topoductor
+npx tsx src/cli.tsx --print-only
+npx tsx src/cli.tsx --version
 ```
 
-**Maintainers — one-time setup**
+| Flag            | Descripción                                                                 |
+|-----------------|-----------------------------------------------------------------------------|
+| `--print-only`  | No ejecuta `cd` ni shell: imprime el comando en stdout (p. ej. para `eval`). |
+| `--version`     | Muestra la versión del paquete y termina.                                    |
 
-1. Repository [brandonhsz/homebrew-tap](https://github.com/brandonhsz/homebrew-tap) must exist (empty is fine).
-2. In **TopoDuctor** → *Settings* → *Secrets and variables* → *Actions*, add **`GORELEASER_GITHUB_TOKEN`**: a PAT used **only** to push the Homebrew cask to **`brandonhsz/homebrew-tap`** (fine-grained: **Contents: Read and write** on that repo only; or classic PAT with **`repo`** if you prefer). Creating the GitHub **Release** in TopoDuctor uses the workflow’s built-in `GITHUB_TOKEN`, so the PAT does not need access to TopoDuctor — that avoids `403 Resource not accessible` when the PAT was scoped only to the tap. See [GoReleaser: resource not accessible](https://goreleaser.com/errors/resource-not-accessible-by-integration/).
-3. Push a version tag to run the release workflow, for example: `git tag v0.1.0 && git push origin v0.1.0`.
+## Comportamiento (resumen)
 
-If you fork the project, update `release.github` and `homebrew_casks.repository` in `.goreleaser.yaml` to match your GitHub owner and repo names.
+- **Proyectos** en `projects.json` (directorio de config del usuario, misma convención que la app histórica en Go).
+- Worktrees nuevos bajo `~/.topoDuctor/projects/…`.
+- Teclas principales: **hjkl** / flechas en la rejilla, **Enter** para salir con opción, **n** crear, **r** renombrar, **d** borrar, **p** proyectos, **ctrl+l** lobby, **ctrl+c** ajustes / comprobar actualización.
 
-## Usage
-
-```text
-topoductor [-print-only] [-version]
-```
-
-| Flag | Description |
-|------|-------------|
-| `-print-only` | Does not `cd` or exec the shell: only prints the action to stdout (e.g. `cd "…"` or the Cursor command). Handy for `eval "$(topoductor -print-only)"` or scripts. |
-| `-version` | Prints the build version and exits (set at release time via GoReleaser `ldflags`). |
-
-You can run the binary **from any directory**; the current working directory only affects whether you see the **lobby** at startup or go straight to a project’s worktree list (see below).
-
-## Lobby and projects
-
-On startup the app reads `projects.json` (path under [Configuration files and paths](#configuration-files-and-paths)).
-
-- If **there are no registered projects**, or the **cwd is not a git repository**, or the **repo toplevel for cwd is not** in the project list, you see the **lobby**: a minimal screen where you open the project picker with **p** or **Enter**.
-- With one or more projects and cwd **inside** a repo that **is** on the list, it opens the **worktree view** for that project (or the saved active one, as applicable).
-
-In the **project picker** (**p** from the main list):
-
-- **↑/↓** or **k/j**: move the cursor.
-- **Enter**: activate the project and load its worktrees.
-- **a**: add a clone path (must be a valid directory).
-- **b**: preferred branches (up to 3 per project) shown first when creating a worktree.
-- **d**: remove the project from the list (does not delete files on disk).
-
-From the worktree list, **Ctrl+L** returns to the lobby (unless you are already in the lobby).
-
-## Main shortcuts (worktree view)
-
-| Key | Action |
-|-----|--------|
-| **↑/↓** or **k/j** | Move selection on the grid (including across rows). |
-| **←/→** or **h/l** | Move across columns in the grid. |
-| **Enter** | Confirm worktree and choose [how to exit](#exit-cd-cursor-or-custom-command). |
-| **n** | Create a new worktree (requires an active project). |
-| **r** | Rename the selected worktree folder. |
-| **d** | Remove the selected worktree (cannot be the only one). |
-| **p** | Open the project picker. |
-| **b** | Branch preferences for the active project. |
-| **q** or **Ctrl+C** | Quit without changing directory (unless you already confirmed exit with Enter). |
-
-In the **create** flow (**n**): first pick the base branch (with text filter and scroll), then enter the new branch/folder name and confirm with **Enter**. **Esc** goes back one step.
-
-For **rename** and **delete confirm**, **Esc** cancels; on delete, **y** or **Enter** confirms, **n** cancels.
-
-## Exit: `cd`, Cursor, or custom command
-
-After **Enter** on a card, the exit dialog appears:
-
-1. **Open shell here** — `chdir` to the worktree path and replace the process with your `$SHELL` (interactive mode on bash/zsh).
-2. **Open in Cursor** — `cursor <path>` or on macOS `open -a Cursor` if the CLI is not on `PATH`.
-3. **Custom command** — one line that may include `{path}`; it is replaced with a properly quoted path for the shell.
-
-With **`-print-only`**, only the equivalent line is printed (e.g. `cd "/path/to/worktree"`).
-
-### Windows limitations
-
-On **Windows**, the program **cannot** replace the process with the shell after `cd` like on Unix. You will see a message telling you to use `-print-only` or copy the command. Custom command mode with `-print-only` is meant for running the line manually when needed.
-
-## Configuration files and paths
-
-| Location | Purpose |
-|----------|---------|
-| `~/.config/topoductor/projects.json` (OS-specific via `UserConfigDir`) | Repo paths, active project, and per-repo preferred branches. |
-| `~/.topoDuctor/projects/<segment>/worktree/<name>` | New checkouts created from the TUI (segment derived from the repo). |
-| `<common-git-dir>/topoductor.json` | Optional legacy state: syncs the “managed” path if it existed in older versions when moving or removing worktrees; **not** written on startup. |
-
-## Technical overview
-
-- Domain in `internal/worktree/` (`Worktree` type and `Service` port).
-- Git CLI implementation in `internal/worktree/git/`.
-- TUI with [Bubble Tea](https://github.com/charmbracelet/bubbletea), styling with Lip Gloss.
-
-## Tests
+## Desarrollo
 
 ```bash
-go test ./...
+npm run typecheck
 ```
 
-## Contributing / agent docs
+## Licencia
 
-Architecture details and conventions: [AGENTS.md](./AGENTS.md).
+La que indique el repositorio (revisa el archivo `LICENSE` si existe).
