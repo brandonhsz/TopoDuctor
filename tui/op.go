@@ -22,6 +22,12 @@ type setupStartedMsg struct {
 	worktreePath string
 }
 
+// setupDoneMsg indicates a worktree setup has finished.
+type setupDoneMsg struct {
+	worktreePath string
+	err          error
+}
+
 // branchesLoadedMsg entrega el listado de ramas para el selector al crear worktree.
 type branchesLoadedMsg struct {
 	branches []string
@@ -93,7 +99,9 @@ func removeWorktreeCmd(svc worktree.Service, path, preArchiveScript string) tea.
 }
 
 // addWorktreeWithSetupCmd creates worktree and runs setup script if defined.
-func addWorktreeWithSetupCmd(svc worktree.Service, baseRef, label string) tea.Cmd {
+// setupDoneChan is used to notify when setup completes.
+// activeProject is the main project path (where .topoductor/project.json lives).
+func addWorktreeWithSetupCmd(svc worktree.Service, baseRef, label string, setupDoneChan chan<- setupDoneMsg, activeProject string) tea.Cmd {
 	return func() tea.Msg {
 		if err := svc.AddUserWorktree(baseRef, label); err != nil {
 			return refreshDoneMsg{err: err}
@@ -115,9 +123,11 @@ func addWorktreeWithSetupCmd(svc worktree.Service, baseRef, label string) tea.Cm
 			return refreshDoneMsg{worktrees: gw}
 		}
 		// Run setup if defined (non-blocking, we don't wait for it)
-		if sc, err := projects.ReadProjectConfig(newPath); err == nil && strings.TrimSpace(sc.Setup) != "" {
+		// Read from activeProject, not from newPath (worktree doesn't have .topoductor)
+		if sc, err := projects.ReadProjectConfig(activeProject); err == nil && strings.TrimSpace(sc.Setup) != "" {
 			go func() {
-				_ = projects.RunScriptInDir(newPath, sc.Setup)
+				err := projects.RunScriptInDir(newPath, sc.Setup)
+				setupDoneChan <- setupDoneMsg{worktreePath: newPath, err: err}
 			}()
 		}
 		// Return the path of the new worktree so the UI can show loading

@@ -90,6 +90,8 @@ type Model struct {
 	settingsLatestRelease  string
 	settingsReleaseURL     string
 	settingsHasNewer       bool
+	// Channel to receive setup completion from background goroutines.
+	setupDoneChan chan setupDoneMsg
 	// Scripts (.topoductor/project.json): confirmación antes de archive manual.
 	scriptArchiveTarget string
 	scriptArchiveLine   string
@@ -132,12 +134,14 @@ func New(factory ServiceFactory, seedCwd string, printOnlyExit bool, version str
 		projectPickerReturn: modeList,
 		keys:                DefaultKeyMap(),
 		styles:              defaultStyles(),
+		setupDoneChan:       make(chan setupDoneMsg, 10), // buffered to avoid blocking
 	}
 }
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
-	return loadProjectsBootstrapCmd(m.seedCwd)
+	// Start listening for setup completion messages in the background
+	return tea.Batch(loadProjectsBootstrapCmd(m.seedCwd), listenSetupDone(m.setupDoneChan))
 }
 
 // Update implements tea.Model.
@@ -226,6 +230,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.setupRunning[msg.worktreePath] = true
 		return m, nil
+
+	case setupDoneMsg:
+		if m.setupRunning != nil {
+			delete(m.setupRunning, msg.worktreePath)
+		}
+		if msg.err != nil {
+			m.banner = "Setup error: " + msg.err.Error()
+		}
+		// Keep listening for more setup completions
+		return m, listenSetupDoneCmd(m.setupDoneChan)
 
 	case updateCheckDoneMsg:
 		if !m.settingsOpen {
@@ -604,7 +618,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.createStep = 0
 				m.createBaseRef = ""
 				m.resetCreateBranchState()
-				return m, addWorktreeWithSetupCmd(m.svc, base, v)
+				return m, addWorktreeWithSetupCmd(m.svc, base, v, m.setupDoneChan, m.activeProject)
 			}
 			var cmd tea.Cmd
 			m.nameInput, cmd = m.nameInput.Update(msg)
@@ -1646,4 +1660,19 @@ func runCustomCmdInBackground(tpl, path string) {
 	cmd = exec.Command(shellPath, "-lc", line)
 	cmd.Env = os.Environ()
 	cmd.Start()
+}
+
+// listenSetupDone returns a command that listens for setup completion and sends setupDoneMsg.
+// It re-subscribes to the channel after each message to handle multiple setups.
+func listenSetupDone(ch <-chan setupDoneMsg) tea.Cmd {
+	return func() tea.Msg {
+		msg := <-ch
+		return msg
+	}
+}
+
+// listenSetupDoneCmd returns a tea.Cmd that listens for setup completion.
+// This can be used in a tea.Sequence or returned after handling setupDoneMsg to keep listening.
+func listenSetupDoneCmd(ch <-chan setupDoneMsg) tea.Cmd {
+	return listenSetupDone(ch)
 }
