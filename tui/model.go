@@ -67,7 +67,9 @@ type Model struct {
 	renameFromPath          string
 	deleteTargetPath        string
 	worktrees               []worktree.Worktree
-	setupRunning            map[string]bool // path → true if setup is running
+	setupRunning            map[string]bool                  // path → true if setup is running
+	archivedWorktrees       map[string][]projects.ArchivedWT // project path → archived worktrees
+	archiveListCursor       int                              // cursor for archived worktrees list
 	cursor                  int
 	SelectedPath            string
 	// ExitKind: "cd", "cursor" o "custom" al confirmar salida; vacío → main usa cd.
@@ -162,6 +164,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.configPath = msg.configPath
 		m.projectPaths = msg.paths
 		m.preferredBranchesByPath = msg.preferredBranches
+		m.archivedWorktrees = msg.archivedWorktrees
 		m.svc = nil
 		m.SelectedPath = ""
 		if msg.showLobby {
@@ -209,6 +212,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.setupRunning = make(map[string]bool)
 			}
 			m.setupRunning[msg.newWorktreePath] = true
+		}
+		// Update archived worktrees if changed
+		if msg.archivedUpdated != nil {
+			m.archivedWorktrees = msg.archivedUpdated
+			if err := m.persistProjects(); err != nil {
+				m.banner = "Error guardando archivados: " + err.Error()
+			}
 		}
 		return m, m.marqueeCmd()
 
@@ -664,7 +674,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						archiveLine = sc.Archive
 					}
 				}
-				return m, removeWorktreeCmd(m.svc, p, archiveLine)
+				return m, archiveWorktreeCmd(m.svc, m.worktrees, p, archiveLine, &m.archivedWorktrees, m.activeProject, maxArchivedWorktrees)
 			}
 			return m, nil
 
@@ -711,6 +721,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				maxScroll := scriptRunMaxScroll(len(lines))
 				if m.scriptRunScroll < maxScroll {
 					m.scriptRunScroll++
+				}
+				return m, nil
+			}
+			return m, nil
+
+		case modeArchiveList:
+			switch msg.String() {
+			case "esc", "q":
+				m.mode = modeList
+				m.archiveListCursor = 0
+				m.banner = ""
+				return m, nil
+			case "up", "k":
+				if m.archiveListCursor > 0 {
+					m.archiveListCursor--
+				}
+				return m, nil
+			case "down", "j":
+				archived := m.archivedWorktrees[m.activeProject]
+				if m.archiveListCursor < len(archived)-1 {
+					m.archiveListCursor++
+				}
+				return m, nil
+			case "enter", "d":
+				// Option to delete an archived worktree permanently
+				archived := m.archivedWorktrees[m.activeProject]
+				if m.archiveListCursor >= 0 && m.archiveListCursor < len(archived) {
+					wt := archived[m.archiveListCursor]
+					if err := projects.DeleteArchivedWorktree(wt.Path); err != nil {
+						m.banner = "Error borrando: " + err.Error()
+					} else {
+						projects.RemoveArchivedWorktree(&projects.File{ArchivedWorktrees: m.archivedWorktrees}, m.activeProject, wt.Path)
+						if err := m.persistProjects(); err != nil {
+							m.banner = "Error guardando: " + err.Error()
+						}
+						m.banner = "Worktree eliminado"
+					}
 				}
 				return m, nil
 			}
@@ -859,6 +906,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.banner = ""
 			m.mode = modeDeleteConfirm
 			m.deleteTargetPath = m.worktrees[m.cursor].Path
+			return m, nil
+		case "ctrl+a":
+			if m.activeProject == "" {
+				m.banner = "Activa un proyecto (p)."
+				return m, nil
+			}
+			archived := m.archivedWorktrees[m.activeProject]
+			if len(archived) == 0 {
+				m.banner = "No hay worktrees archivados."
+				return m, nil
+			}
+			m.mode = modeArchiveList
+			m.banner = ""
 			return m, nil
 		case "up", "k":
 			prev := m.cursor
@@ -1675,4 +1735,29 @@ func listenSetupDone(ch <-chan setupDoneMsg) tea.Cmd {
 // This can be used in a tea.Sequence or returned after handling setupDoneMsg to keep listening.
 func listenSetupDoneCmd(ch <-chan setupDoneMsg) tea.Cmd {
 	return listenSetupDone(ch)
+}
+
+// renderArchiveListModal renders the archived worktrees list.
+func (m Model) renderArchiveListModal() string {
+	archived := m.archivedWorktrees[m.activeProject]
+	if len(archived) == 0 {
+		return m.wrapModal("Worktrees archivados", m.styles.Muted.Render("No hay worktrees archivados."))
+	}
+	var sb strings.Builder
+	sb.WriteString(m.styles.Muted.Render("Worktrees archivados (máx 5, se borran del más antiguo)"))
+	sb.WriteString("\n\n")
+	for i, wt := range archived {
+		sel := ""
+		if i == m.archiveListCursor {
+			sel = "▸ "
+		} else {
+			sel = "  "
+		}
+		sb.WriteString(m.styles.Prompt.Render(sel + filepath.Base(wt.Path)))
+		sb.WriteString(" ")
+		sb.WriteString(m.styles.Muted.Render(wt.Branch))
+		sb.WriteString("\n")
+	}
+	sb.WriteString(m.styles.Muted.Render("\nenter/d eliminar · esc volver"))
+	return m.wrapModal("Worktrees archivados", sb.String())
 }

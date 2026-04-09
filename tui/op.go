@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/macpro/topoductor/internal/projects"
@@ -14,7 +15,8 @@ import (
 type refreshDoneMsg struct {
 	worktrees       []worktree.Worktree
 	err             error
-	newWorktreePath string // used to track setup loading state
+	newWorktreePath string                           // used to track setup loading state
+	archivedUpdated map[string][]projects.ArchivedWT // updated archived worktrees to persist
 }
 
 // setupStartedMsg indicates a worktree setup has started (for loading indicator).
@@ -95,6 +97,52 @@ func removeWorktreeCmd(svc worktree.Service, path, preArchiveScript string) tea.
 			return refreshDoneMsg{err: err}
 		}
 		return refreshDoneMsg{worktrees: gw}
+	}
+}
+
+// archiveWorktreeCmd archives a worktree instead of deleting it.
+// It removes from git worktree list but keeps the directory.
+// If over maxArchived, deletes the oldest archived worktree from disk.
+func archiveWorktreeCmd(svc worktree.Service, worktrees []worktree.Worktree, path, preArchiveScript string, archivedWorktrees *map[string][]projects.ArchivedWT, activeProject string, maxArchived int) tea.Cmd {
+	return func() tea.Msg {
+		// Run pre-archive script if defined
+		if s := strings.TrimSpace(preArchiveScript); s != "" {
+			if err := projects.RunScriptInDir(path, s); err != nil {
+				return refreshDoneMsg{err: err}
+			}
+		}
+		// Remove from git worktree list
+		if err := svc.RemoveWorktree(path); err != nil {
+			return refreshDoneMsg{err: err}
+		}
+		// Find branch info
+		var branch string
+		for _, wt := range worktrees {
+			if wt.Path == path {
+				branch = wt.Branch
+				break
+			}
+		}
+		// Add to archived list
+		archived := projects.ArchivedWT{
+			Path:       path,
+			Branch:     branch,
+			ArchivedAt: time.Now(),
+		}
+		f := &projects.File{ArchivedWorktrees: *archivedWorktrees}
+		deletedPath := projects.AddArchivedWorktree(f, activeProject, archived, maxArchived)
+		// If over limit, delete oldest from disk
+		if deletedPath != "" {
+			if err := projects.DeleteArchivedWorktree(deletedPath); err != nil {
+				// Log but continue
+			}
+		}
+		*archivedWorktrees = f.ArchivedWorktrees
+		gw, err := svc.List()
+		if err != nil {
+			return refreshDoneMsg{err: err}
+		}
+		return refreshDoneMsg{worktrees: gw, archivedUpdated: *archivedWorktrees}
 	}
 }
 

@@ -4,14 +4,22 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // File is the persisted project list (repositories the user can switch between).
 type File struct {
-	Paths  []string `json:"paths"`
-	Active string   `json:"active"`
-	// PreferredBranches: ruta absoluta del repo -> hasta 3 nombres de rama (orden = prioridad al listar).
-	PreferredBranches map[string][]string `json:"preferred_branches,omitempty"`
+	Paths             []string                `json:"paths"`
+	Active            string                  `json:"active"`
+	PreferredBranches map[string][]string     `json:"preferred_branches,omitempty"`
+	ArchivedWorktrees map[string][]ArchivedWT `json:"archived_worktrees,omitempty"`
+}
+
+// ArchivedWT represents an archived worktree.
+type ArchivedWT struct {
+	Path       string    `json:"path"`
+	Branch     string    `json:"branch"`
+	ArchivedAt time.Time `json:"archived_at"`
 }
 
 // DefaultConfigPath returns ~/.config/topoductor/projects.json (OS-aware).
@@ -69,4 +77,50 @@ func NormalizePaths(paths []string) []string {
 		out = append(out, abs)
 	}
 	return out
+}
+
+// GetArchivedWorktrees returns archived worktrees for a project.
+func GetArchivedWorktrees(f *File, projectPath string) []ArchivedWT {
+	if f.ArchivedWorktrees == nil {
+		return nil
+	}
+	return f.ArchivedWorktrees[projectPath]
+}
+
+// AddArchivedWorktree adds a worktree to the archived list.
+// If over maxArchived, removes the oldest one and returns its path for deletion.
+func AddArchivedWorktree(f *File, projectPath string, wt ArchivedWT, maxArchived int) (deletedPath string) {
+	if f.ArchivedWorktrees == nil {
+		f.ArchivedWorktrees = make(map[string][]ArchivedWT)
+	}
+	archived := f.ArchivedWorktrees[projectPath]
+	// Add new archived worktree
+	archived = append(archived, wt)
+	// If over limit, remove oldest (first) and mark for deletion
+	if len(archived) > maxArchived {
+		deletedPath = archived[0].Path
+		archived = archived[1:]
+	}
+	f.ArchivedWorktrees[projectPath] = archived
+	return deletedPath
+}
+
+// DeleteArchivedWorktree removes the archived worktree directory from disk.
+func DeleteArchivedWorktree(wtPath string) error {
+	return os.RemoveAll(wtPath)
+}
+
+// RemoveArchivedWorktree removes a specific archived worktree by path.
+func RemoveArchivedWorktree(f *File, projectPath, wtPath string) {
+	if f.ArchivedWorktrees == nil {
+		return
+	}
+	archived := f.ArchivedWorktrees[projectPath]
+	var filtered []ArchivedWT
+	for _, awt := range archived {
+		if awt.Path != wtPath {
+			filtered = append(filtered, awt)
+		}
+	}
+	f.ArchivedWorktrees[projectPath] = filtered
 }

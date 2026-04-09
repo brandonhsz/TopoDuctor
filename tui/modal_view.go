@@ -15,7 +15,7 @@ import (
 // modalMenuOpen is true when a menu is shown as a floating modal (not the main list grid).
 func (m Model) modalMenuOpen() bool {
 	switch m.mode {
-	case modeProjectPicker, modeAddProjectPath, modeBranchPrefs, modeExitAction, modeCreate, modeRename, modeDeleteConfirm, modeArchiveScriptConfirm, modeProjectScripts, modeScriptRun:
+	case modeProjectPicker, modeAddProjectPath, modeBranchPrefs, modeExitAction, modeCreate, modeRename, modeDeleteConfirm, modeArchiveScriptConfirm, modeProjectScripts, modeScriptRun, modeArchiveList:
 		return true
 	default:
 		return false
@@ -226,6 +226,9 @@ func (m Model) renderActiveModal() string {
 
 	case modeScriptRun:
 		return m.wrapModal("Ejecutar script — "+m.scriptRunTitle, m.renderScriptRunBody())
+
+	case modeArchiveList:
+		return m.renderArchiveListModal()
 
 	default:
 		return ""
