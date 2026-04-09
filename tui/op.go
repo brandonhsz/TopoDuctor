@@ -17,6 +17,7 @@ type refreshDoneMsg struct {
 	err             error
 	newWorktreePath string                           // used to track setup loading state
 	archivedUpdated map[string][]projects.ArchivedWT // updated archived worktrees to persist
+	statusesUpdated map[string]WorktreeStatus        // updated worktree statuses to persist
 }
 
 // setupStartedMsg indicates a worktree setup has started (for loading indicator).
@@ -149,7 +150,7 @@ func archiveWorktreeCmd(svc worktree.Service, worktrees []worktree.Worktree, pat
 // addWorktreeWithSetupCmd creates worktree and runs setup script if defined.
 // setupDoneChan is used to notify when setup completes.
 // activeProject is the main project path (where .topoductor/project.json lives).
-func addWorktreeWithSetupCmd(svc worktree.Service, baseRef, label string, setupDoneChan chan<- setupDoneMsg, activeProject string) tea.Cmd {
+func addWorktreeWithSetupCmd(svc worktree.Service, baseRef, label string, setupDoneChan chan<- setupDoneMsg, activeProject string, worktreeStatuses map[string]WorktreeStatus) tea.Cmd {
 	return func() tea.Msg {
 		if err := svc.AddUserWorktree(baseRef, label); err != nil {
 			return refreshDoneMsg{err: err}
@@ -170,6 +171,8 @@ func addWorktreeWithSetupCmd(svc worktree.Service, baseRef, label string, setupD
 		if newPath == "" {
 			return refreshDoneMsg{worktrees: gw}
 		}
+		// Set default status to "in progress" for new worktree
+		worktreeStatuses[newPath] = StatusInProgress
 		// Run setup if defined (non-blocking, we don't wait for it)
 		// Read from activeProject, not from newPath (worktree doesn't have .topoductor)
 		if sc, err := projects.ReadProjectConfig(activeProject); err == nil && strings.TrimSpace(sc.Setup) != "" {
@@ -179,7 +182,7 @@ func addWorktreeWithSetupCmd(svc worktree.Service, baseRef, label string, setupD
 			}()
 		}
 		// Return the path of the new worktree so the UI can show loading
-		return refreshDoneMsg{worktrees: gw, newWorktreePath: newPath}
+		return refreshDoneMsg{worktrees: gw, newWorktreePath: newPath, statusesUpdated: worktreeStatuses}
 	}
 }
 

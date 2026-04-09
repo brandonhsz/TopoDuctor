@@ -13,6 +13,7 @@ type File struct {
 	Active            string                  `json:"active"`
 	PreferredBranches map[string][]string     `json:"preferred_branches,omitempty"`
 	ArchivedWorktrees map[string][]ArchivedWT `json:"archived_worktrees,omitempty"`
+	WorktreeStatuses  map[string]string       `json:"worktree_statuses,omitempty"` // worktree path -> status
 }
 
 // ArchivedWT represents an archived worktree.
@@ -123,4 +124,32 @@ func RemoveArchivedWorktree(f *File, projectPath, wtPath string) {
 		}
 	}
 	f.ArchivedWorktrees[projectPath] = filtered
+}
+
+// GetWorktreeStatus returns the status for a worktree (default: "in progress").
+func GetWorktreeStatus(f *File, wtPath string) string {
+	if f.WorktreeStatuses == nil {
+		return "in progress"
+	}
+	status, ok := f.WorktreeStatuses[wtPath]
+	if !ok || status == "" {
+		return "in progress"
+	}
+	return status
+}
+
+// SetWorktreeStatus sets the status for a worktree.
+func SetWorktreeStatus(f *File, wtPath, status string) {
+	if f.WorktreeStatuses == nil {
+		f.WorktreeStatuses = make(map[string]string)
+	}
+	f.WorktreeStatuses[wtPath] = status
+}
+
+// RemoveWorktreeStatus removes the status entry for a worktree.
+func RemoveWorktreeStatus(f *File, wtPath string) {
+	if f.WorktreeStatuses == nil {
+		return
+	}
+	delete(f.WorktreeStatuses, wtPath)
 }

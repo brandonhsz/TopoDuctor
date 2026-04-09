@@ -69,6 +69,7 @@ type Model struct {
 	worktrees               []worktree.Worktree
 	setupRunning            map[string]bool                  // path → true if setup is running
 	archivedWorktrees       map[string][]projects.ArchivedWT // project path → archived worktrees
+	worktreeStatuses        map[string]WorktreeStatus        // worktree path → status
 	archiveListCursor       int                              // cursor for archived worktrees list
 	cursor                  int
 	SelectedPath            string
@@ -165,6 +166,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.projectPaths = msg.paths
 		m.preferredBranchesByPath = msg.preferredBranches
 		m.archivedWorktrees = msg.archivedWorktrees
+		m.worktreeStatuses = msg.worktreeStatuses
 		m.svc = nil
 		m.SelectedPath = ""
 		if msg.showLobby {
@@ -218,6 +220,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.archivedWorktrees = msg.archivedUpdated
 			if err := m.persistProjects(); err != nil {
 				m.banner = "Error guardando archivados: " + err.Error()
+			}
+		}
+		// Update worktree statuses if changed
+		if msg.statusesUpdated != nil {
+			m.worktreeStatuses = msg.statusesUpdated
+			if err := m.persistProjects(); err != nil {
+				m.banner = "Error guardando statuses: " + err.Error()
 			}
 		}
 		return m, m.marqueeCmd()
@@ -628,7 +637,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.createStep = 0
 				m.createBaseRef = ""
 				m.resetCreateBranchState()
-				return m, addWorktreeWithSetupCmd(m.svc, base, v, m.setupDoneChan, m.activeProject)
+				return m, addWorktreeWithSetupCmd(m.svc, base, v, m.setupDoneChan, m.activeProject, m.worktreeStatuses)
 			}
 			var cmd tea.Cmd
 			m.nameInput, cmd = m.nameInput.Update(msg)
@@ -943,6 +952,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mode = modeDeleteConfirm
 			m.deleteTargetPath = m.worktrees[m.cursor].Path
 			return m, nil
+		case "s":
+			if len(m.worktrees) == 0 || m.activeProject == "" {
+				m.banner = "Activa un proyecto con worktrees (p)."
+				return m, nil
+			}
+			wt := m.worktrees[m.cursor]
+			currentStatus := m.worktreeStatuses[wt.Path]
+			newStatus := nextStatus(currentStatus)
+			m.worktreeStatuses[wt.Path] = newStatus
+			m.banner = "Status: " + string(newStatus)
+			if err := m.persistProjects(); err != nil {
+				m.banner = "Error guardando status: " + err.Error()
+			}
+			return m, nil
 		case "ctrl+a":
 			if m.activeProject == "" {
 				m.banner = "Activa un proyecto (p)."
@@ -1164,10 +1187,16 @@ func (m Model) renderWTCard(wt worktree.Worktree, selected bool) string {
 	name := m.cardNameText(wt, selected)
 	br := m.cardBranchText(wt, selected)
 
-	// Show loading indicator if setup is running
+	// Show loading indicator if setup is running, and status emoji
 	var status string
 	if m.setupRunning != nil && m.setupRunning[wt.Path] {
 		status = " " + m.styles.Muted.Render("⚡")
+	}
+	// Show status emoji if available
+	if m.worktreeStatuses != nil {
+		if s, ok := m.worktreeStatuses[wt.Path]; ok {
+			status = " " + statusEmoji(s) + status
+		}
 	}
 
 	title := m.styles.CardTitle.Render(name)
