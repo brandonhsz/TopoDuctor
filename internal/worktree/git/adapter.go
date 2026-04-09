@@ -26,6 +26,10 @@ func (a *Adapter) AddUserWorktree(baseRef, label string) error {
 	return a.Runner.AddUserWorktree(baseRef, label)
 }
 
+func (a *Adapter) RestoreWorktree(path, branch string) error {
+	return a.Runner.RestoreWorktree(path, branch)
+}
+
 func (a *Adapter) MoveWorktree(oldPath, newBasename string) error {
 	return a.Runner.MoveWorktree(oldPath, newBasename)
 }

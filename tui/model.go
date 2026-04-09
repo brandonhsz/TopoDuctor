@@ -744,6 +744,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.archiveListCursor++
 				}
 				return m, nil
+			case "r":
+				// Restore archived worktree back to git worktree list
+				archived := m.archivedWorktrees[m.activeProject]
+				if m.archiveListCursor >= 0 && m.archiveListCursor < len(archived) {
+					wt := archived[m.archiveListCursor]
+					// Check if branch already exists
+					branches, _ := m.svc.ListBranches()
+					branchExists := false
+					for _, b := range branches {
+						if b == wt.Branch {
+							branchExists = true
+							break
+						}
+					}
+					if !branchExists {
+						m.banner = "La rama ya no existe en el repositorio"
+						return m, nil
+					}
+					// Use RestoreWorktree to add existing directory (no branch creation)
+					if err := m.svc.RestoreWorktree(wt.Path, wt.Branch); err != nil {
+						m.banner = "Error restaurando: " + err.Error()
+					} else {
+						// Remove from archived list
+						projects.RemoveArchivedWorktree(&projects.File{ArchivedWorktrees: m.archivedWorktrees}, m.activeProject, wt.Path)
+						if err := m.persistProjects(); err != nil {
+							m.banner = "Error guardando: " + err.Error()
+						} else {
+							m.banner = "Worktree restaurado"
+							m.mode = modeList
+							m.archiveListCursor = 0
+							m.busy = true
+							return m, reloadListCmd(m.svc)
+						}
+					}
+				}
+				return m, nil
 			case "enter", "d":
 				// Option to delete an archived worktree permanently
 				archived := m.archivedWorktrees[m.activeProject]
@@ -1758,6 +1794,6 @@ func (m Model) renderArchiveListModal() string {
 		sb.WriteString(m.styles.Muted.Render(wt.Branch))
 		sb.WriteString("\n")
 	}
-	sb.WriteString(m.styles.Muted.Render("\nenter/d eliminar · esc volver"))
+	sb.WriteString(m.styles.Muted.Render("\nr restaurar · enter/d eliminar · esc volver"))
 	return m.wrapModal("Worktrees archivados", sb.String())
 }

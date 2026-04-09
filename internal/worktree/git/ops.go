@@ -75,6 +75,27 @@ func (r Runner) addUserWith(git GitCommandRunner, baseRef, label string) error {
 	return nil
 }
 
+// RestoreWorktree adds an existing directory as a worktree (for archived worktrees restoration).
+func (r Runner) RestoreWorktree(path, branch string) error {
+	return r.restoreWith(execRunner{}, path, branch)
+}
+
+func (r Runner) restoreWith(git GitCommandRunner, path, branch string) error {
+	if err := r.assertInsideRepo(git); err != nil {
+		return err
+	}
+	top, err := r.absGitOutput(git, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return fmt.Errorf("git root: %w", err)
+	}
+	// Just add the existing directory as a worktree (no -b flag)
+	_, err = git.OutputGit(top, "worktree", "add", path, branch)
+	if err != nil {
+		return fmt.Errorf("git worktree add: %w", err)
+	}
+	return nil
+}
+
 // MoveWorktree renames the worktree directory to newBasename (last path segment), via git worktree move.
 func (r Runner) MoveWorktree(oldPath, newBasename string) error {
 	return r.moveWith(execRunner{}, oldPath, newBasename)
