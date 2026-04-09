@@ -67,6 +67,7 @@ type Model struct {
 	renameFromPath          string
 	deleteTargetPath        string
 	worktrees               []worktree.Worktree
+	setupRunning            map[string]bool // path → true if setup is running
 	cursor                  int
 	SelectedPath            string
 	// ExitKind: "cd", "cursor" o "custom" al confirmar salida; vacío → main usa cd.
@@ -198,6 +199,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = modeList
 		syncSelectedPath(&m)
 		m.marqueeTick = 0
+		// If there's a new worktree, show loading indicator for setup
+		if msg.newWorktreePath != "" {
+			if m.setupRunning == nil {
+				m.setupRunning = make(map[string]bool)
+			}
+			m.setupRunning[msg.newWorktreePath] = true
+		}
 		return m, m.marqueeCmd()
 
 	case branchesLoadedMsg:
@@ -211,6 +219,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.createBranchCursor = 0
 		m.createBranchScroll = 0
 		return m, m.createBranchFilter.Focus()
+
+	case setupStartedMsg:
+		if m.setupRunning == nil {
+			m.setupRunning = make(map[string]bool)
+		}
+		m.setupRunning[msg.worktreePath] = true
+		return m, nil
 
 	case updateCheckDoneMsg:
 		if !m.settingsOpen {
@@ -1038,8 +1053,15 @@ func joinRowTop(cells []string) string {
 func (m Model) renderWTCard(wt worktree.Worktree, selected bool) string {
 	name := m.cardNameText(wt, selected)
 	br := m.cardBranchText(wt, selected)
+
+	// Show loading indicator if setup is running
+	var status string
+	if m.setupRunning != nil && m.setupRunning[wt.Path] {
+		status = " " + m.styles.Muted.Render("⚡")
+	}
+
 	title := m.styles.CardTitle.Render(name)
-	sub := m.styles.CardSub.Render("↳ " + br)
+	sub := m.styles.CardSub.Render("↳ " + br + status)
 	inner := lipgloss.JoinVertical(lipgloss.Left, title, sub)
 	inner = lipgloss.NewStyle().Width(22).Render(inner)
 

@@ -12,8 +12,14 @@ import (
 
 // refreshDoneMsg follows a list reload (after create / rename / remove).
 type refreshDoneMsg struct {
-	worktrees []worktree.Worktree
-	err       error
+	worktrees       []worktree.Worktree
+	err             error
+	newWorktreePath string // used to track setup loading state
+}
+
+// setupStartedMsg indicates a worktree setup has started (for loading indicator).
+type setupStartedMsg struct {
+	worktreePath string
 }
 
 // branchesLoadedMsg entrega el listado de ramas para el selector al crear worktree.
@@ -114,6 +120,9 @@ func addWorktreeWithSetupCmd(svc worktree.Service, baseRef, label string) tea.Cm
 				_ = projects.RunScriptInDir(newPath, sc.Setup)
 			}()
 		}
-		return refreshDoneMsg{worktrees: gw}
+		// Return the path of the new worktree so the UI can show loading
+		return refreshDoneMsg{worktrees: gw, newWorktreePath: newPath}
 	}
 }
+
+// branchesLoadedMsg entrega el listado de ramas para el selector al crear worktree.
