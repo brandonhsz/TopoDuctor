@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -34,52 +35,52 @@ type marqueeTickMsg struct{}
 
 // Model is the main bubbletea model for the application.
 type Model struct {
-	newService       ServiceFactory
-	version          string
-	seedCwd          string
-	configPath       string
-	projectPaths              []string
-	activeProject             string
-	preferredBranchesByPath   map[string][]string
-	projectCursor             int
-	branchPrefFocus           int
-	branchPrefsForPath        string
-	branchPrefInputs          [3]textinput.Model
-	projPathInput    textinput.Model
-	svc              worktree.Service
-	printOnlyExit    bool
-	loading          bool
-	loadErr          string
-	busy             bool
-	banner           string
-	mode             viewMode
-	projectPickerReturn viewMode // modo al salir de proyectos con esc (modeList o modeLobby)
-	createStep       int // 0 = rama base, 1 = branchBase (nombre rama / sufijo carpeta)
-	createBaseRef    string
-	createBranchesLoading bool
-	createBranchesLoadErr string
-	createBranchesAll     []string
-	createBranchFilter    textinput.Model
-	createBranchCursor    int
-	createBranchScroll    int
-	nameInput        textinput.Model
-	renameFromPath   string
-	deleteTargetPath string
-	worktrees        []worktree.Worktree
-	cursor           int
-	SelectedPath     string
+	newService              ServiceFactory
+	version                 string
+	seedCwd                 string
+	configPath              string
+	projectPaths            []string
+	activeProject           string
+	preferredBranchesByPath map[string][]string
+	projectCursor           int
+	branchPrefFocus         int
+	branchPrefsForPath      string
+	branchPrefInputs        [3]textinput.Model
+	projPathInput           textinput.Model
+	svc                     worktree.Service
+	printOnlyExit           bool
+	loading                 bool
+	loadErr                 string
+	busy                    bool
+	banner                  string
+	mode                    viewMode
+	projectPickerReturn     viewMode // modo al salir de proyectos con esc (modeList o modeLobby)
+	createStep              int      // 0 = rama base, 1 = branchBase (nombre rama / sufijo carpeta)
+	createBaseRef           string
+	createBranchesLoading   bool
+	createBranchesLoadErr   string
+	createBranchesAll       []string
+	createBranchFilter      textinput.Model
+	createBranchCursor      int
+	createBranchScroll      int
+	nameInput               textinput.Model
+	renameFromPath          string
+	deleteTargetPath        string
+	worktrees               []worktree.Worktree
+	cursor                  int
+	SelectedPath            string
 	// ExitKind: "cd", "cursor" o "custom" al confirmar salida; vacío → main usa cd.
-	ExitKind      string
-	ExitCustomCmd string // plantilla con {path} cuando ExitKind es "custom"
-	exitActionCursor int
+	ExitKind           string
+	ExitCustomCmd      string // plantilla con {path} cuando ExitKind es "custom"
+	exitActionCursor   int
 	exitCustomCmdInput textinput.Model
-	keys             KeyMap
-	styles           Styles
-	quitting         bool
-	termW            int
-	termH            int
-	marqueeTick      int
-	settingsOpen     bool
+	keys               KeyMap
+	styles             Styles
+	quitting           bool
+	termW              int
+	termH              int
+	marqueeTick        int
+	settingsOpen       bool
 	// Campos del modal Configuración (comprobar / instalar actualización).
 	settingsUpdateChecking bool
 	settingsUpdateApplying bool
@@ -505,8 +506,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.ExitKind = "custom"
 					m.ExitCustomCmd = v
 					m.banner = ""
-					m.quitting = true
-					return m, tea.Quit
+					m.mode = modeList
+					m.banner = "Comando ejecutado"
+					m.marqueeTick = 0
+					path := m.SelectedPath
+					// Clear selected path so main.go won't re-run on quit
+					m.SelectedPath = ""
+					// Run custom command in background without waiting
+					go runCustomCmdInBackground(v, path)
+					return m, nil
 				}
 				var cmd tea.Cmd
 				m.exitCustomCmdInput, cmd = m.exitCustomCmdInput.Update(msg)
@@ -547,8 +555,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case 1:
 					m.ExitKind = "cursor"
 					m.ExitCustomCmd = ""
-					m.quitting = true
-					return m, tea.Quit
+					m.mode = modeList
+					m.banner = "Cursor abierto"
+					m.marqueeTick = 0
+					path := m.SelectedPath
+					// Clear selected path so main.go won't re-run on quit
+					m.SelectedPath = ""
+					// Run cursor in background without waiting
+					go runCursorInBackground(path)
+					return m, nil
 				}
 			}
 			return m, nil
@@ -1576,4 +1591,37 @@ func (m Model) renderLobbyPanel() string {
 	}
 	sb.WriteString(m.renderAppStatusBar(w, hint))
 	return sb.String()
+}
+
+// runCursorInBackground opens the path in Cursor without blocking the TUI.
+func runCursorInBackground(path string) {
+	var cmd *exec.Cmd
+	if lp, err := exec.LookPath("cursor"); err == nil {
+		cmd = exec.Command(lp, path)
+	} else if runtime.GOOS == "darwin" {
+		cmd = exec.Command("open", "-a", "Cursor", path)
+	} else {
+		return
+	}
+	cmd.Start()
+}
+
+// runCustomCmdInBackground executes a custom command template without blocking the TUI.
+func runCustomCmdInBackground(tpl, path string) {
+	line := strings.ReplaceAll(tpl, "{path}", path)
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		return
+	}
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+	shellPath, err := exec.LookPath(shell)
+	if err != nil {
+		shellPath = "/bin/sh"
+	}
+	cmd = exec.Command(shellPath, "-lc", line)
+	cmd.Env = os.Environ()
+	cmd.Start()
 }
