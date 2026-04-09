@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -80,6 +81,38 @@ func removeWorktreeCmd(svc worktree.Service, path, preArchiveScript string) tea.
 		gw, err := svc.List()
 		if err != nil {
 			return refreshDoneMsg{err: err}
+		}
+		return refreshDoneMsg{worktrees: gw}
+	}
+}
+
+// addWorktreeWithSetupCmd creates worktree and runs setup script if defined.
+func addWorktreeWithSetupCmd(svc worktree.Service, baseRef, label string) tea.Cmd {
+	return func() tea.Msg {
+		if err := svc.AddUserWorktree(baseRef, label); err != nil {
+			return refreshDoneMsg{err: err}
+		}
+		// Get the created worktree path
+		gw, err := svc.List()
+		if err != nil {
+			return refreshDoneMsg{err: err}
+		}
+		// Find the newly created worktree by label
+		var newPath string
+		for _, wt := range gw {
+			if filepath.Base(wt.Path) == label {
+				newPath = wt.Path
+				break
+			}
+		}
+		if newPath == "" {
+			return refreshDoneMsg{worktrees: gw}
+		}
+		// Run setup if defined (non-blocking, we don't wait for it)
+		if sc, err := projects.ReadProjectConfig(newPath); err == nil && strings.TrimSpace(sc.Setup) != "" {
+			go func() {
+				_ = projects.RunScriptInDir(newPath, sc.Setup)
+			}()
 		}
 		return refreshDoneMsg{worktrees: gw}
 	}

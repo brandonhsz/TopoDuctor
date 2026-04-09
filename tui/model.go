@@ -589,7 +589,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.createStep = 0
 				m.createBaseRef = ""
 				m.resetCreateBranchState()
-				return m, addWorktreeCmd(m.svc, base, v)
+				return m, addWorktreeWithSetupCmd(m.svc, base, v)
 			}
 			var cmd tea.Cmd
 			m.nameInput, cmd = m.nameInput.Update(msg)
@@ -736,6 +736,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m.openBranchPrefsForPath(m.activeProject)
+		case "ctrl+r":
+			if len(m.worktrees) == 0 || m.activeProject == "" {
+				m.banner = "Activa un proyecto con worktrees (p)."
+				return m, nil
+			}
+			sc, err := projects.ReadProjectConfig(m.activeProject)
+			if err != nil {
+				m.banner = err.Error()
+				return m, nil
+			}
+			if strings.TrimSpace(sc.Run) == "" {
+				m.banner = "No hay scripts.run (.topoductor/project.json o editor e)."
+				return m, nil
+			}
+			m.banner = ""
+			return m.startScriptRunModal("Run", m.worktrees[m.cursor].Path, sc.Run)
 		case "e":
 			if m.activeProject == "" {
 				m.banner = "Añade o activa un proyecto (p)."
@@ -787,22 +803,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.banner = ""
 			return m.startScriptRunModal("Setup", m.worktrees[m.cursor].Path, sc.Setup)
-		case "g":
-			if len(m.worktrees) == 0 || m.activeProject == "" {
-				m.banner = "Activa un proyecto con worktrees (p)."
-				return m, nil
-			}
-			sc, err := projects.ReadProjectConfig(m.activeProject)
-			if err != nil {
-				m.banner = err.Error()
-				return m, nil
-			}
-			if strings.TrimSpace(sc.Run) == "" {
-				m.banner = "No hay scripts.run (.topoductor/project.json o editor e)."
-				return m, nil
-			}
-			m.banner = ""
-			return m.startScriptRunModal("Run", m.worktrees[m.cursor].Path, sc.Run)
 		case "z":
 			if len(m.worktrees) == 0 || m.activeProject == "" {
 				m.banner = "Activa un proyecto con worktrees (p)."
@@ -1247,7 +1247,7 @@ func (m Model) openProjectScriptsEditor() (Model, tea.Cmd) {
 	}
 	ph := []string{
 		"setup — p.ej. npm install (tecla i)",
-		"run — p.ej. npm run start (tecla g)",
+		"run — p.ej. npm run start (ctrl+r)",
 		"archive — p.ej. rm -rf node_modules (tecla z)",
 	}
 	for i := range m.scriptEditInputs {
