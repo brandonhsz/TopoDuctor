@@ -30,6 +30,9 @@ const cardBranchMaxRunes = 18
 // marqueeTickInterval controls how fast the selected card scrolls long text.
 const marqueeTickInterval = 200 * time.Millisecond
 
+// removingSpinnerFrames animates the card while git removes a worktree.
+var removingSpinnerFrames = [...]string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
 // marqueeTickMsg drives horizontal scrolling for truncated text on the selected card.
 type marqueeTickMsg struct{}
 
@@ -66,6 +69,7 @@ type Model struct {
 	nameInput               textinput.Model
 	renameFromPath          string
 	deleteTargetPath        string
+	removingWorktreePath    string // non-empty → spinner on that card during git remove
 	worktrees               []worktree.Worktree
 	setupRunning            map[string]bool                  // path → true if setup is running
 	archivedWorktrees       map[string][]projects.ArchivedWT // project path → archived worktrees
@@ -198,9 +202,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case refreshDoneMsg:
 		m.busy = false
+		if msg.removingDonePath != "" && m.removingWorktreePath == msg.removingDonePath {
+			m.removingWorktreePath = ""
+		}
 		if msg.err != nil {
 			m.banner = msg.err.Error()
-			return m, nil
+			return m, m.marqueeCmd()
 		}
 		m.banner = ""
 		m.worktrees = msg.worktrees
@@ -676,14 +683,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				p := m.deleteTargetPath
 				m.deleteTargetPath = ""
 				m.mode = modeList
-				m.busy = true
+				m.removingWorktreePath = p
 				var archiveLine string
 				if m.activeProject != "" {
 					if sc, err := projects.ReadProjectConfig(m.activeProject); err == nil {
 						archiveLine = sc.Archive
 					}
 				}
-				return m, archiveWorktreeCmd(m.svc, m.worktrees, p, archiveLine, &m.archivedWorktrees, m.activeProject, maxArchivedWorktrees)
+				return m, tea.Batch(
+					archiveWorktreeCmd(m.svc, m.worktrees, p, archiveLine, &m.archivedWorktrees, m.activeProject, maxArchivedWorktrees),
+					m.marqueeCmd(),
+				)
 			}
 			return m, nil
 
@@ -841,6 +851,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// modeList
+		if m.removingWorktreePath != "" && removalBlocksListAction(msg.String()) {
+			m.banner = "Espera a que termine la eliminación."
+			return m, nil
+		}
 		switch msg.String() {
 		case "q":
 			m.quitting = true
@@ -1126,7 +1140,20 @@ func (m Model) branchLabel(wt worktree.Worktree) string {
 	return wt.Branch
 }
 
+// removalBlocksListAction lists keys disabled while a worktree removal runs (avoid conflicting git/UI).
+func removalBlocksListAction(key string) bool {
+	switch key {
+	case "p", "n", "r", "d", "enter", "z", "i", "ctrl+r", "e", "b", "B", "ctrl+a", "ctrl+l":
+		return true
+	default:
+		return false
+	}
+}
+
 func (m Model) selectedNeedsMarquee() bool {
+	if m.removingWorktreePath != "" {
+		return true
+	}
 	if m.cursor < 0 || m.cursor >= len(m.worktrees) {
 		return false
 	}
@@ -1187,10 +1214,14 @@ func (m Model) renderWTCard(wt worktree.Worktree, selected bool) string {
 	name := m.cardNameText(wt, selected)
 	br := m.cardBranchText(wt, selected)
 
-	// Show loading indicator if setup is running, and status emoji
+	// Spinner while git removes this worktree; setup lightning; status emoji.
 	var status string
+	if m.removingWorktreePath == wt.Path {
+		f := removingSpinnerFrames[m.marqueeTick%len(removingSpinnerFrames)]
+		status = " " + m.styles.Muted.Render(f)
+	}
 	if m.setupRunning != nil && m.setupRunning[wt.Path] {
-		status = " " + m.styles.Muted.Render("⚡")
+		status += " " + m.styles.Muted.Render("⚡")
 	}
 	// Show status emoji if available
 	if m.worktreeStatuses != nil {

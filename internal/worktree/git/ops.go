@@ -69,7 +69,11 @@ func (r Runner) addUserWith(git GitCommandRunner, baseRef, label string) error {
 	if err := os.MkdirAll(filepath.Dir(newPath), 0o755); err != nil {
 		return fmt.Errorf("crear directorio para worktree: %w", err)
 	}
-	if err := r.addWorktree(git, top, newPath, slug, baseRef); err != nil {
+	startPoint, err := syncBaseRef(git, top, baseRef)
+	if err != nil {
+		return err
+	}
+	if err := r.addWorktree(git, top, newPath, slug, startPoint); err != nil {
 		return err
 	}
 	return nil
