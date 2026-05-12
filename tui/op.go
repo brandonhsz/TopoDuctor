@@ -18,6 +18,8 @@ type refreshDoneMsg struct {
 	newWorktreePath string                           // used to track setup loading state
 	archivedUpdated map[string][]projects.ArchivedWT // updated archived worktrees to persist
 	statusesUpdated map[string]WorktreeStatus        // updated worktree statuses to persist
+	// removingDonePath clears the per-card removal spinner (set by archive/remove flows).
+	removingDonePath string
 }
 
 // setupStartedMsg indicates a worktree setup has started (for loading indicator).
@@ -106,15 +108,16 @@ func removeWorktreeCmd(svc worktree.Service, path, preArchiveScript string) tea.
 // If over maxArchived, deletes the oldest archived worktree from disk.
 func archiveWorktreeCmd(svc worktree.Service, worktrees []worktree.Worktree, path, preArchiveScript string, archivedWorktrees *map[string][]projects.ArchivedWT, activeProject string, maxArchived int) tea.Cmd {
 	return func() tea.Msg {
+		clearRemoving := path
 		// Run pre-archive script if defined
 		if s := strings.TrimSpace(preArchiveScript); s != "" {
 			if err := projects.RunScriptInDir(path, s); err != nil {
-				return refreshDoneMsg{err: err}
+				return refreshDoneMsg{err: err, removingDonePath: clearRemoving}
 			}
 		}
 		// Remove from git worktree list
 		if err := svc.RemoveWorktree(path); err != nil {
-			return refreshDoneMsg{err: err}
+			return refreshDoneMsg{err: err, removingDonePath: clearRemoving}
 		}
 		// Find branch info
 		var branch string
@@ -141,9 +144,9 @@ func archiveWorktreeCmd(svc worktree.Service, worktrees []worktree.Worktree, pat
 		*archivedWorktrees = f.ArchivedWorktrees
 		gw, err := svc.List()
 		if err != nil {
-			return refreshDoneMsg{err: err}
+			return refreshDoneMsg{err: err, removingDonePath: clearRemoving}
 		}
-		return refreshDoneMsg{worktrees: gw, archivedUpdated: *archivedWorktrees}
+		return refreshDoneMsg{worktrees: gw, archivedUpdated: *archivedWorktrees, removingDonePath: clearRemoving}
 	}
 }
 
