@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -29,57 +30,65 @@ const cardBranchMaxRunes = 18
 // marqueeTickInterval controls how fast the selected card scrolls long text.
 const marqueeTickInterval = 200 * time.Millisecond
 
+// removingSpinnerFrames animates the card while git removes a worktree.
+var removingSpinnerFrames = [...]string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
 // marqueeTickMsg drives horizontal scrolling for truncated text on the selected card.
 type marqueeTickMsg struct{}
 
 // Model is the main bubbletea model for the application.
 type Model struct {
-	newService       ServiceFactory
-	version          string
-	seedCwd          string
-	configPath       string
-	projectPaths              []string
-	activeProject             string
-	preferredBranchesByPath   map[string][]string
-	projectCursor             int
-	branchPrefFocus           int
-	branchPrefsForPath        string
-	branchPrefInputs          [3]textinput.Model
-	projPathInput    textinput.Model
-	svc              worktree.Service
-	printOnlyExit    bool
-	loading          bool
-	loadErr          string
-	busy             bool
-	banner           string
-	mode             viewMode
-	projectPickerReturn viewMode // modo al salir de proyectos con esc (modeList o modeLobby)
-	createStep       int // 0 = rama base, 1 = branchBase (nombre rama / sufijo carpeta)
-	createBaseRef    string
-	createBranchesLoading bool
-	createBranchesLoadErr string
-	createBranchesAll     []string
-	createBranchFilter    textinput.Model
-	createBranchCursor    int
-	createBranchScroll    int
-	nameInput        textinput.Model
-	renameFromPath   string
-	deleteTargetPath string
-	worktrees        []worktree.Worktree
-	cursor           int
-	SelectedPath     string
+	newService              ServiceFactory
+	version                 string
+	seedCwd                 string
+	configPath              string
+	projectPaths            []string
+	activeProject           string
+	preferredBranchesByPath map[string][]string
+	projectCursor           int
+	branchPrefFocus         int
+	branchPrefsForPath      string
+	branchPrefInputs        [3]textinput.Model
+	projPathInput           textinput.Model
+	svc                     worktree.Service
+	printOnlyExit           bool
+	loading                 bool
+	loadErr                 string
+	busy                    bool
+	banner                  string
+	mode                    viewMode
+	projectPickerReturn     viewMode // modo al salir de proyectos con esc (modeList o modeLobby)
+	createStep              int      // 0 = rama base, 1 = branchBase (nombre rama / sufijo carpeta)
+	createBaseRef           string
+	createBranchesLoading   bool
+	createBranchesLoadErr   string
+	createBranchesAll       []string
+	createBranchFilter      textinput.Model
+	createBranchCursor      int
+	createBranchScroll      int
+	nameInput               textinput.Model
+	renameFromPath          string
+	deleteTargetPath        string
+	removingWorktreePath    string // non-empty → spinner on that card during git remove
+	worktrees               []worktree.Worktree
+	setupRunning            map[string]bool                  // path → true if setup is running
+	archivedWorktrees       map[string][]projects.ArchivedWT // project path → archived worktrees
+	worktreeStatuses        map[string]WorktreeStatus        // worktree path → status
+	archiveListCursor       int                              // cursor for archived worktrees list
+	cursor                  int
+	SelectedPath            string
 	// ExitKind: "cd", "cursor" o "custom" al confirmar salida; vacío → main usa cd.
-	ExitKind      string
-	ExitCustomCmd string // plantilla con {path} cuando ExitKind es "custom"
-	exitActionCursor int
+	ExitKind           string
+	ExitCustomCmd      string // plantilla con {path} cuando ExitKind es "custom"
+	exitActionCursor   int
 	exitCustomCmdInput textinput.Model
-	keys             KeyMap
-	styles           Styles
-	quitting         bool
-	termW            int
-	termH            int
-	marqueeTick      int
-	settingsOpen     bool
+	keys               KeyMap
+	styles             Styles
+	quitting           bool
+	termW              int
+	termH              int
+	marqueeTick        int
+	settingsOpen       bool
 	// Campos del modal Configuración (comprobar / instalar actualización).
 	settingsUpdateChecking bool
 	settingsUpdateApplying bool
@@ -88,6 +97,8 @@ type Model struct {
 	settingsLatestRelease  string
 	settingsReleaseURL     string
 	settingsHasNewer       bool
+	// Channel to receive setup completion from background goroutines.
+	setupDoneChan chan setupDoneMsg
 	// Scripts (.topoductor/project.json): confirmación antes de archive manual.
 	scriptArchiveTarget string
 	scriptArchiveLine   string
@@ -101,7 +112,6 @@ type Model struct {
 	scriptRunOutput     string
 	scriptRunErr        string
 	scriptRunScroll     int
-	setupRunning        map[string]bool
 }
 
 // withSettingsOpened abre Configuración y limpia el estado del chequeo de versiones.
@@ -131,12 +141,14 @@ func New(factory ServiceFactory, seedCwd string, printOnlyExit bool, version str
 		projectPickerReturn: modeList,
 		keys:                DefaultKeyMap(),
 		styles:              defaultStyles(),
+		setupDoneChan:       make(chan setupDoneMsg, 10), // buffered to avoid blocking
 	}
 }
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
-	return loadProjectsBootstrapCmd(m.seedCwd)
+	// Start listening for setup completion messages in the background
+	return tea.Batch(loadProjectsBootstrapCmd(m.seedCwd), listenSetupDone(m.setupDoneChan))
 }
 
 // Update implements tea.Model.
@@ -157,6 +169,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.configPath = msg.configPath
 		m.projectPaths = msg.paths
 		m.preferredBranchesByPath = msg.preferredBranches
+		m.archivedWorktrees = msg.archivedWorktrees
+		m.worktreeStatuses = msg.worktreeStatuses
 		m.svc = nil
 		m.SelectedPath = ""
 		if msg.showLobby {
@@ -188,9 +202,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case refreshDoneMsg:
 		m.busy = false
+		if msg.removingDonePath != "" && m.removingWorktreePath == msg.removingDonePath {
+			m.removingWorktreePath = ""
+		}
 		if msg.err != nil {
 			m.banner = msg.err.Error()
-			return m, nil
+			return m, m.marqueeCmd()
 		}
 		m.banner = ""
 		m.worktrees = msg.worktrees
@@ -198,23 +215,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = modeList
 		syncSelectedPath(&m)
 		m.marqueeTick = 0
-		if msg.newWorktreePath != "" && m.activeProject != "" {
+		// If there's a new worktree, show loading indicator for setup
+		if msg.newWorktreePath != "" {
 			if m.setupRunning == nil {
 				m.setupRunning = make(map[string]bool)
 			}
 			m.setupRunning[msg.newWorktreePath] = true
-			return m, tea.Batch(m.marqueeCmd(), runSetupCmd(m.activeProject, msg.newWorktreePath))
+		}
+		// Update archived worktrees if changed
+		if msg.archivedUpdated != nil {
+			m.archivedWorktrees = msg.archivedUpdated
+			if err := m.persistProjects(); err != nil {
+				m.banner = "Error guardando archivados: " + err.Error()
+			}
+		}
+		// Update worktree statuses if changed
+		if msg.statusesUpdated != nil {
+			m.worktreeStatuses = msg.statusesUpdated
+			if err := m.persistProjects(); err != nil {
+				m.banner = "Error guardando statuses: " + err.Error()
+			}
 		}
 		return m, m.marqueeCmd()
-
-	case setupDoneMsg:
-		if m.setupRunning != nil {
-			delete(m.setupRunning, msg.path)
-		}
-		if msg.err != nil {
-			m.banner = "setup: " + msg.err.Error()
-		}
-		return m, nil
 
 	case branchesLoadedMsg:
 		m.createBranchesLoading = false
@@ -227,6 +249,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.createBranchCursor = 0
 		m.createBranchScroll = 0
 		return m, m.createBranchFilter.Focus()
+
+	case setupStartedMsg:
+		if m.setupRunning == nil {
+			m.setupRunning = make(map[string]bool)
+		}
+		m.setupRunning[msg.worktreePath] = true
+		return m, nil
+
+	case setupDoneMsg:
+		if m.setupRunning != nil {
+			delete(m.setupRunning, msg.worktreePath)
+		}
+		if msg.err != nil {
+			m.banner = "Setup error: " + msg.err.Error()
+		}
+		// Keep listening for more setup completions
+		return m, listenSetupDoneCmd(m.setupDoneChan)
 
 	case updateCheckDoneMsg:
 		if !m.settingsOpen {
@@ -522,8 +561,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.ExitKind = "custom"
 					m.ExitCustomCmd = v
 					m.banner = ""
-					m.quitting = true
-					return m, tea.Quit
+					m.mode = modeList
+					m.banner = "Comando ejecutado"
+					m.marqueeTick = 0
+					path := m.SelectedPath
+					// Clear selected path so main.go won't re-run on quit
+					m.SelectedPath = ""
+					// Run custom command in background without waiting
+					go runCustomCmdInBackground(v, path)
+					return m, nil
 				}
 				var cmd tea.Cmd
 				m.exitCustomCmdInput, cmd = m.exitCustomCmdInput.Update(msg)
@@ -564,8 +610,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case 1:
 					m.ExitKind = "cursor"
 					m.ExitCustomCmd = ""
-					m.quitting = true
-					return m, tea.Quit
+					m.mode = modeList
+					m.banner = "Cursor abierto"
+					m.marqueeTick = 0
+					path := m.SelectedPath
+					// Clear selected path so main.go won't re-run on quit
+					m.SelectedPath = ""
+					// Run cursor in background without waiting
+					go runCursorInBackground(path)
+					return m, nil
 				}
 			}
 			return m, nil
@@ -591,7 +644,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.createStep = 0
 				m.createBaseRef = ""
 				m.resetCreateBranchState()
-				return m, addWorktreeWithSetupCmd(m.svc, base, v)
+				return m, addWorktreeWithSetupCmd(m.svc, base, v, m.setupDoneChan, m.activeProject, m.worktreeStatuses)
 			}
 			var cmd tea.Cmd
 			m.nameInput, cmd = m.nameInput.Update(msg)
@@ -630,14 +683,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				p := m.deleteTargetPath
 				m.deleteTargetPath = ""
 				m.mode = modeList
-				m.busy = true
+				m.removingWorktreePath = p
 				var archiveLine string
 				if m.activeProject != "" {
 					if sc, err := projects.ReadProjectConfig(m.activeProject); err == nil {
 						archiveLine = sc.Archive
 					}
 				}
-				return m, removeWorktreeCmd(m.svc, p, archiveLine)
+				return m, tea.Batch(
+					archiveWorktreeCmd(m.svc, m.worktrees, p, archiveLine, &m.archivedWorktrees, m.activeProject, maxArchivedWorktrees),
+					m.marqueeCmd(),
+				)
 			}
 			return m, nil
 
@@ -689,6 +745,79 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case modeArchiveList:
+			switch msg.String() {
+			case "esc", "q":
+				m.mode = modeList
+				m.archiveListCursor = 0
+				m.banner = ""
+				return m, nil
+			case "up", "k":
+				if m.archiveListCursor > 0 {
+					m.archiveListCursor--
+				}
+				return m, nil
+			case "down", "j":
+				archived := m.archivedWorktrees[m.activeProject]
+				if m.archiveListCursor < len(archived)-1 {
+					m.archiveListCursor++
+				}
+				return m, nil
+			case "r":
+				// Restore archived worktree back to git worktree list
+				archived := m.archivedWorktrees[m.activeProject]
+				if m.archiveListCursor >= 0 && m.archiveListCursor < len(archived) {
+					wt := archived[m.archiveListCursor]
+					// Check if branch already exists
+					branches, _ := m.svc.ListBranches()
+					branchExists := false
+					for _, b := range branches {
+						if b == wt.Branch {
+							branchExists = true
+							break
+						}
+					}
+					if !branchExists {
+						m.banner = "La rama ya no existe en el repositorio"
+						return m, nil
+					}
+					// Use RestoreWorktree to add existing directory (no branch creation)
+					if err := m.svc.RestoreWorktree(wt.Path, wt.Branch); err != nil {
+						m.banner = "Error restaurando: " + err.Error()
+					} else {
+						// Remove from archived list
+						projects.RemoveArchivedWorktree(&projects.File{ArchivedWorktrees: m.archivedWorktrees}, m.activeProject, wt.Path)
+						if err := m.persistProjects(); err != nil {
+							m.banner = "Error guardando: " + err.Error()
+						} else {
+							m.banner = "Worktree restaurado"
+							m.mode = modeList
+							m.archiveListCursor = 0
+							m.busy = true
+							return m, reloadListCmd(m.svc)
+						}
+					}
+				}
+				return m, nil
+			case "enter", "d":
+				// Option to delete an archived worktree permanently
+				archived := m.archivedWorktrees[m.activeProject]
+				if m.archiveListCursor >= 0 && m.archiveListCursor < len(archived) {
+					wt := archived[m.archiveListCursor]
+					if err := projects.DeleteArchivedWorktree(wt.Path); err != nil {
+						m.banner = "Error borrando: " + err.Error()
+					} else {
+						projects.RemoveArchivedWorktree(&projects.File{ArchivedWorktrees: m.archivedWorktrees}, m.activeProject, wt.Path)
+						if err := m.persistProjects(); err != nil {
+							m.banner = "Error guardando: " + err.Error()
+						}
+						m.banner = "Worktree eliminado"
+					}
+				}
+				return m, nil
+			}
+			return m, nil
+
 		case modeProjectScripts:
 			switch msg.String() {
 			case "esc":
@@ -722,6 +851,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// modeList
+		if m.removingWorktreePath != "" && removalBlocksListAction(msg.String()) {
+			m.banner = "Espera a que termine la eliminación."
+			return m, nil
+		}
 		switch msg.String() {
 		case "q":
 			m.quitting = true
@@ -738,6 +871,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m.openBranchPrefsForPath(m.activeProject)
+		case "ctrl+r":
+			if len(m.worktrees) == 0 || m.activeProject == "" {
+				m.banner = "Activa un proyecto con worktrees (p)."
+				return m, nil
+			}
+			sc, err := projects.ReadProjectConfig(m.activeProject)
+			if err != nil {
+				m.banner = err.Error()
+				return m, nil
+			}
+			if strings.TrimSpace(sc.Run) == "" {
+				m.banner = "No hay scripts.run (.topoductor/project.json o editor e)."
+				return m, nil
+			}
+			m.banner = ""
+			return m.startScriptRunModal("Run", m.worktrees[m.cursor].Path, sc.Run)
 		case "e":
 			if m.activeProject == "" {
 				m.banner = "Añade o activa un proyecto (p)."
@@ -789,22 +938,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.banner = ""
 			return m.startScriptRunModal("Setup", m.worktrees[m.cursor].Path, sc.Setup)
-		case "g":
-			if len(m.worktrees) == 0 || m.activeProject == "" {
-				m.banner = "Activa un proyecto con worktrees (p)."
-				return m, nil
-			}
-			sc, err := projects.ReadProjectConfig(m.activeProject)
-			if err != nil {
-				m.banner = err.Error()
-				return m, nil
-			}
-			if strings.TrimSpace(sc.Run) == "" {
-				m.banner = "No hay scripts.run (.topoductor/project.json o editor e)."
-				return m, nil
-			}
-			m.banner = ""
-			return m.startScriptRunModal("Run", m.worktrees[m.cursor].Path, sc.Run)
 		case "z":
 			if len(m.worktrees) == 0 || m.activeProject == "" {
 				m.banner = "Activa un proyecto con worktrees (p)."
@@ -832,6 +965,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.banner = ""
 			m.mode = modeDeleteConfirm
 			m.deleteTargetPath = m.worktrees[m.cursor].Path
+			return m, nil
+		case "s":
+			if len(m.worktrees) == 0 || m.activeProject == "" {
+				m.banner = "Activa un proyecto con worktrees (p)."
+				return m, nil
+			}
+			wt := m.worktrees[m.cursor]
+			currentStatus := m.worktreeStatuses[wt.Path]
+			newStatus := nextStatus(currentStatus)
+			m.worktreeStatuses[wt.Path] = newStatus
+			m.banner = "Status: " + string(newStatus)
+			if err := m.persistProjects(); err != nil {
+				m.banner = "Error guardando status: " + err.Error()
+			}
+			return m, nil
+		case "ctrl+a":
+			if m.activeProject == "" {
+				m.banner = "Activa un proyecto (p)."
+				return m, nil
+			}
+			archived := m.archivedWorktrees[m.activeProject]
+			if len(archived) == 0 {
+				m.banner = "No hay worktrees archivados."
+				return m, nil
+			}
+			m.mode = modeArchiveList
+			m.banner = ""
 			return m, nil
 		case "up", "k":
 			prev := m.cursor
@@ -980,7 +1140,20 @@ func (m Model) branchLabel(wt worktree.Worktree) string {
 	return wt.Branch
 }
 
+// removalBlocksListAction lists keys disabled while a worktree removal runs (avoid conflicting git/UI).
+func removalBlocksListAction(key string) bool {
+	switch key {
+	case "p", "n", "r", "d", "enter", "z", "i", "ctrl+r", "e", "b", "B", "ctrl+a", "ctrl+l":
+		return true
+	default:
+		return false
+	}
+}
+
 func (m Model) selectedNeedsMarquee() bool {
+	if m.removingWorktreePath != "" {
+		return true
+	}
 	if m.cursor < 0 || m.cursor >= len(m.worktrees) {
 		return false
 	}
@@ -1040,13 +1213,26 @@ func joinRowTop(cells []string) string {
 func (m Model) renderWTCard(wt worktree.Worktree, selected bool) string {
 	name := m.cardNameText(wt, selected)
 	br := m.cardBranchText(wt, selected)
-	title := m.styles.CardTitle.Render(name)
-	sub := m.styles.CardSub.Render("↳ " + br)
-	lines := []string{title, sub}
-	if m.setupRunning[wt.Path] {
-		lines = append(lines, m.styles.CardSub.Render("⚡ setup..."))
+
+	// Spinner while git removes this worktree; setup lightning; status emoji.
+	var status string
+	if m.removingWorktreePath == wt.Path {
+		f := removingSpinnerFrames[m.marqueeTick%len(removingSpinnerFrames)]
+		status = " " + m.styles.Muted.Render(f)
 	}
-	inner := lipgloss.JoinVertical(lipgloss.Left, lines...)
+	if m.setupRunning != nil && m.setupRunning[wt.Path] {
+		status += " " + m.styles.Muted.Render("⚡")
+	}
+	// Show status emoji if available
+	if m.worktreeStatuses != nil {
+		if s, ok := m.worktreeStatuses[wt.Path]; ok {
+			status = " " + statusEmoji(s) + status
+		}
+	}
+
+	title := m.styles.CardTitle.Render(name)
+	sub := m.styles.CardSub.Render("↳ " + br + status)
+	inner := lipgloss.JoinVertical(lipgloss.Left, title, sub)
 	inner = lipgloss.NewStyle().Width(22).Render(inner)
 
 	var frame lipgloss.Style
@@ -1253,7 +1439,7 @@ func (m Model) openProjectScriptsEditor() (Model, tea.Cmd) {
 	}
 	ph := []string{
 		"setup — p.ej. npm install (tecla i)",
-		"run — p.ej. npm run start (tecla g)",
+		"run — p.ej. npm run start (ctrl+r)",
 		"archive — p.ej. rm -rf node_modules (tecla z)",
 	}
 	for i := range m.scriptEditInputs {
@@ -1597,4 +1783,77 @@ func (m Model) renderLobbyPanel() string {
 	}
 	sb.WriteString(m.renderAppStatusBar(w, hint))
 	return sb.String()
+}
+
+// runCursorInBackground opens the path in Cursor without blocking the TUI.
+func runCursorInBackground(path string) {
+	var cmd *exec.Cmd
+	if lp, err := exec.LookPath("cursor"); err == nil {
+		cmd = exec.Command(lp, path)
+	} else if runtime.GOOS == "darwin" {
+		cmd = exec.Command("open", "-a", "Cursor", path)
+	} else {
+		return
+	}
+	cmd.Start()
+}
+
+// runCustomCmdInBackground executes a custom command template without blocking the TUI.
+func runCustomCmdInBackground(tpl, path string) {
+	line := strings.ReplaceAll(tpl, "{path}", path)
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		return
+	}
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+	shellPath, err := exec.LookPath(shell)
+	if err != nil {
+		shellPath = "/bin/sh"
+	}
+	cmd = exec.Command(shellPath, "-lc", line)
+	cmd.Env = os.Environ()
+	cmd.Start()
+}
+
+// listenSetupDone returns a command that listens for setup completion and sends setupDoneMsg.
+// It re-subscribes to the channel after each message to handle multiple setups.
+func listenSetupDone(ch <-chan setupDoneMsg) tea.Cmd {
+	return func() tea.Msg {
+		msg := <-ch
+		return msg
+	}
+}
+
+// listenSetupDoneCmd returns a tea.Cmd that listens for setup completion.
+// This can be used in a tea.Sequence or returned after handling setupDoneMsg to keep listening.
+func listenSetupDoneCmd(ch <-chan setupDoneMsg) tea.Cmd {
+	return listenSetupDone(ch)
+}
+
+// renderArchiveListModal renders the archived worktrees list.
+func (m Model) renderArchiveListModal() string {
+	archived := m.archivedWorktrees[m.activeProject]
+	if len(archived) == 0 {
+		return m.wrapModal("Worktrees archivados", m.styles.Muted.Render("No hay worktrees archivados."))
+	}
+	var sb strings.Builder
+	sb.WriteString(m.styles.Muted.Render("Worktrees archivados (máx 5, se borran del más antiguo)"))
+	sb.WriteString("\n\n")
+	for i, wt := range archived {
+		sel := ""
+		if i == m.archiveListCursor {
+			sel = "▸ "
+		} else {
+			sel = "  "
+		}
+		sb.WriteString(m.styles.Prompt.Render(sel + filepath.Base(wt.Path)))
+		sb.WriteString(" ")
+		sb.WriteString(m.styles.Muted.Render(wt.Branch))
+		sb.WriteString("\n")
+	}
+	sb.WriteString(m.styles.Muted.Render("\nr restaurar · enter/d eliminar · esc volver"))
+	return m.wrapModal("Worktrees archivados", sb.String())
 }

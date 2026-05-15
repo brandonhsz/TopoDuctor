@@ -69,8 +69,33 @@ func (r Runner) addUserWith(git GitCommandRunner, baseRef, label string) error {
 	if err := os.MkdirAll(filepath.Dir(newPath), 0o755); err != nil {
 		return fmt.Errorf("crear directorio para worktree: %w", err)
 	}
-	if err := r.addWorktree(git, top, newPath, slug, baseRef); err != nil {
+	startPoint, err := syncBaseRef(git, top, baseRef)
+	if err != nil {
 		return err
+	}
+	if err := r.addWorktree(git, top, newPath, slug, startPoint); err != nil {
+		return err
+	}
+	return nil
+}
+
+// RestoreWorktree adds an existing directory as a worktree (for archived worktrees restoration).
+func (r Runner) RestoreWorktree(path, branch string) error {
+	return r.restoreWith(execRunner{}, path, branch)
+}
+
+func (r Runner) restoreWith(git GitCommandRunner, path, branch string) error {
+	if err := r.assertInsideRepo(git); err != nil {
+		return err
+	}
+	top, err := r.absGitOutput(git, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return fmt.Errorf("git root: %w", err)
+	}
+	// Just add the existing directory as a worktree (no -b flag)
+	_, err = git.OutputGit(top, "worktree", "add", path, branch)
+	if err != nil {
+		return fmt.Errorf("git worktree add: %w", err)
 	}
 	return nil
 }

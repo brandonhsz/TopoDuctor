@@ -6,31 +6,46 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/macpro/topoductor/internal/worktree"
 )
 
 // stubSvc implements worktree.Service for unit tests.
 type stubSvc struct {
-	wts         []worktree.Worktree
-	addErr      error
-	addedPaths  []string
+	wts        []worktree.Worktree
+	addErr     error
+	addedPaths []string
 }
 
-func (s *stubSvc) List() ([]worktree.Worktree, error)    { return s.wts, nil }
-func (s *stubSvc) ListBranches() ([]string, error)        { return nil, nil }
-func (s *stubSvc) MoveWorktree(_, _ string) error         { return nil }
-func (s *stubSvc) RemoveWorktree(_ string) error          { return nil }
-func (s *stubSvc) AddUserWorktree(_, _ string) error {
+func (s *stubSvc) List() ([]worktree.Worktree, error)      { return s.wts, nil }
+func (s *stubSvc) ListBranches() ([]string, error)          { return nil, nil }
+func (s *stubSvc) MoveWorktree(_, _ string) error           { return nil }
+func (s *stubSvc) RemoveWorktree(_ string) error             { return nil }
+func (s *stubSvc) RestoreWorktree(_, _ string) error        { return nil }
+func (s *stubSvc) AddUserWorktree(_, label string) error {
 	if s.addErr != nil {
 		return s.addErr
 	}
-	// Simulate the new worktree appearing in the list after creation.
-	newPath := filepath.Join(os.TempDir(), "wt-new")
-	s.wts = append(s.wts, worktree.Worktree{Path: newPath, Branch: "new-branch"})
+	// Use a real temp directory whose basename matches label (matches dev's detection logic).
+	newPath := filepath.Join(os.TempDir(), label)
+	if err := os.MkdirAll(newPath, 0o755); err != nil {
+		return err
+	}
+	s.wts = append(s.wts, worktree.Worktree{Path: newPath, Branch: label})
 	s.addedPaths = append(s.addedPaths, newPath)
 	return nil
 }
+
+// noNewWorktreeSvc is a stub where AddUserWorktree succeeds but the list doesn't change.
+type noNewWorktreeSvc struct{ wts []worktree.Worktree }
+
+func (s *noNewWorktreeSvc) List() ([]worktree.Worktree, error)    { return s.wts, nil }
+func (s *noNewWorktreeSvc) ListBranches() ([]string, error)        { return nil, nil }
+func (s *noNewWorktreeSvc) MoveWorktree(_, _ string) error         { return nil }
+func (s *noNewWorktreeSvc) RemoveWorktree(_ string) error          { return nil }
+func (s *noNewWorktreeSvc) AddUserWorktree(_, _ string) error      { return nil }
+func (s *noNewWorktreeSvc) RestoreWorktree(_, _ string) error      { return nil }
 
 // ---- addWorktreeWithSetupCmd ----
 
@@ -40,8 +55,9 @@ func TestAddWorktreeWithSetupCmd_setsNewWorktreePath(t *testing.T) {
 			{Path: "/existing/wt", Branch: "main"},
 		},
 	}
+	ch := make(chan setupDoneMsg, 1)
 
-	cmd := addWorktreeWithSetupCmd(svc, "main", "feature")
+	cmd := addWorktreeWithSetupCmd(svc, "main", "feature", ch, "", map[string]WorktreeStatus{})
 	msg := cmd()
 
 	got, ok := msg.(refreshDoneMsg)
@@ -54,7 +70,6 @@ func TestAddWorktreeWithSetupCmd_setsNewWorktreePath(t *testing.T) {
 	if got.newWorktreePath == "" {
 		t.Fatal("expected newWorktreePath to be set")
 	}
-	// Must be the new path (not the pre-existing one).
 	if got.newWorktreePath == "/existing/wt" {
 		t.Fatal("newWorktreePath points to the pre-existing worktree")
 	}
@@ -62,8 +77,9 @@ func TestAddWorktreeWithSetupCmd_setsNewWorktreePath(t *testing.T) {
 
 func TestAddWorktreeWithSetupCmd_addFailReturnsErr(t *testing.T) {
 	svc := &stubSvc{addErr: errors.New("git error")}
+	ch := make(chan setupDoneMsg, 1)
 
-	cmd := addWorktreeWithSetupCmd(svc, "main", "feature")
+	cmd := addWorktreeWithSetupCmd(svc, "main", "feature", ch, "", map[string]WorktreeStatus{})
 	msg := cmd()
 
 	got, ok := msg.(refreshDoneMsg)
@@ -78,62 +94,32 @@ func TestAddWorktreeWithSetupCmd_addFailReturnsErr(t *testing.T) {
 	}
 }
 
-func TestAddWorktreeWithSetupCmd_noNewPathWhenListUnchanged(t *testing.T) {
+func TestAddWorktreeWithSetupCmd_noNewPathWhenLabelNotFound(t *testing.T) {
+	// The stub adds a path whose basename matches label; using a svc that
+	// keeps the list unchanged after Add means no match by label → empty path.
 	existing := worktree.Worktree{Path: "/repo/wt", Branch: "main"}
-	svc := &stubSvc{wts: []worktree.Worktree{existing}}
+	svc := &noNewWorktreeSvc{wts: []worktree.Worktree{existing}}
+	ch := make(chan setupDoneMsg, 1)
 
-	// Override Add to NOT modify the list (edge case).
-	realAdd := svc.addErr
-	_ = realAdd
-	// Patch: use a svc that adds nothing new.
-	noNewSvc := &noNewWorktreeSvc{base: svc}
-
-	cmd := addWorktreeWithSetupCmd(noNewSvc, "main", "x")
+	cmd := addWorktreeWithSetupCmd(svc, "main", "new-feature", ch, "", map[string]WorktreeStatus{})
 	msg := cmd()
 
-	got := msg.(refreshDoneMsg)
+	got, ok := msg.(refreshDoneMsg)
+	if !ok {
+		t.Fatalf("expected refreshDoneMsg, got %T", msg)
+	}
 	if got.newWorktreePath != "" {
 		t.Fatalf("expected empty newWorktreePath, got %q", got.newWorktreePath)
 	}
 }
 
-// noNewWorktreeSvc is a stub where AddUserWorktree succeeds but the list doesn't change.
-type noNewWorktreeSvc struct{ base *stubSvc }
-
-func (s *noNewWorktreeSvc) List() ([]worktree.Worktree, error) { return s.base.wts, nil }
-func (s *noNewWorktreeSvc) ListBranches() ([]string, error)     { return nil, nil }
-func (s *noNewWorktreeSvc) MoveWorktree(_, _ string) error      { return nil }
-func (s *noNewWorktreeSvc) RemoveWorktree(_ string) error       { return nil }
-func (s *noNewWorktreeSvc) AddUserWorktree(_, _ string) error   { return nil }
-
-// ---- runSetupCmd ----
-
-func TestRunSetupCmd_emptyScriptReturnsOK(t *testing.T) {
-	dir := t.TempDir() // no project.json → empty setup
-	cmd := runSetupCmd(dir, dir)
-	msg := cmd()
-
-	got, ok := msg.(setupDoneMsg)
-	if !ok {
-		t.Fatalf("expected setupDoneMsg, got %T", msg)
-	}
-	if got.err != nil {
-		t.Fatalf("unexpected error: %v", got.err)
-	}
-	if got.path != dir {
-		t.Fatalf("path mismatch: got %q want %q", got.path, dir)
-	}
-}
-
-func TestRunSetupCmd_runsScript(t *testing.T) {
+func TestAddWorktreeWithSetupCmd_runsSetupViaChannel(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell scripts not supported on Windows")
 	}
 	projectDir := t.TempDir()
-	worktreeDir := t.TempDir()
+	sentinel := filepath.Join(t.TempDir(), "setup_ran")
 
-	// Write a project.json with a setup script that creates a sentinel file.
-	sentinel := filepath.Join(worktreeDir, "setup_ran")
 	cfgDir := filepath.Join(projectDir, ".topoductor")
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -143,27 +129,41 @@ func TestRunSetupCmd_runsScript(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := runSetupCmd(projectDir, worktreeDir)
+	// Stub that adds a worktree whose basename matches the label.
+	svc := &stubSvc{}
+	ch := make(chan setupDoneMsg, 1)
+
+	cmd := addWorktreeWithSetupCmd(svc, "main", "feature", ch, projectDir, map[string]WorktreeStatus{})
 	msg := cmd()
 
-	got, ok := msg.(setupDoneMsg)
+	got, ok := msg.(refreshDoneMsg)
 	if !ok {
-		t.Fatalf("expected setupDoneMsg, got %T", msg)
+		t.Fatalf("expected refreshDoneMsg, got %T", msg)
 	}
-	if got.err != nil {
-		t.Fatalf("setup script failed: %v", got.err)
+	if got.newWorktreePath == "" {
+		t.Fatal("expected newWorktreePath to be set")
 	}
+
+	// Setup runs in a goroutine — wait for channel with a timeout.
+	select {
+	case done := <-ch:
+		if done.err != nil {
+			t.Fatalf("setup script failed: %v", done.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for setup completion")
+	}
+
 	if _, err := os.Stat(sentinel); os.IsNotExist(err) {
 		t.Fatal("setup script did not run (sentinel file missing)")
 	}
 }
 
-func TestRunSetupCmd_propagatesScriptError(t *testing.T) {
+func TestAddWorktreeWithSetupCmd_channelReceivesErrorOnScriptFailure(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell scripts not supported on Windows")
 	}
 	projectDir := t.TempDir()
-	worktreeDir := t.TempDir()
 
 	cfgDir := filepath.Join(projectDir, ".topoductor")
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
@@ -174,14 +174,22 @@ func TestRunSetupCmd_propagatesScriptError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := runSetupCmd(projectDir, worktreeDir)
+	svc := &stubSvc{}
+	ch := make(chan setupDoneMsg, 1)
+
+	cmd := addWorktreeWithSetupCmd(svc, "main", "feature", ch, projectDir, map[string]WorktreeStatus{})
 	msg := cmd()
 
-	got, ok := msg.(setupDoneMsg)
-	if !ok {
-		t.Fatalf("expected setupDoneMsg, got %T", msg)
+	if _, ok := msg.(refreshDoneMsg); !ok {
+		t.Fatalf("expected refreshDoneMsg, got %T", msg)
 	}
-	if got.err == nil {
-		t.Fatal("expected error from failing script, got nil")
+
+	select {
+	case done := <-ch:
+		if done.err == nil {
+			t.Fatal("expected error from failing script, got nil")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for setup completion")
 	}
 }

@@ -9,6 +9,8 @@ type Service interface {
 	// con rama nueva <label>,
 	// ramificando desde baseRef (ej. main, origin/develop).
 	AddUserWorktree(baseRef, label string) error
+	// RestoreWorktree restaura un worktree existente (directorio ya existe, solo lo agrega a git).
+	RestoreWorktree(path, branch string) error
 	MoveWorktree(oldPath, newBasename string) error
 	RemoveWorktree(path string) error
 }

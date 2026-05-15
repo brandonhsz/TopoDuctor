@@ -84,10 +84,10 @@ func runExitAction(kind, path, customTpl string) error {
 	case "cd":
 		return chdirAndExecShell(path)
 	case "cursor":
-		return openInCursor(path)
+		return openInCursorBackground(path)
 	case "custom":
 		line := expandPathTemplate(customTpl, path)
-		return runShellLine(line)
+		return runShellLineBackground(line)
 	default:
 		return chdirAndExecShell(path)
 	}
@@ -125,6 +125,26 @@ func openInCursor(path string) error {
 	return fmt.Errorf("no se encontró el comando \"cursor\" en PATH (instala la CLI de Cursor)")
 }
 
+func openInCursorBackground(path string) error {
+	if lp, err := exec.LookPath("cursor"); err == nil {
+		cmd := exec.Command(lp, path)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Start()
+		return nil
+	}
+	if runtime.GOOS == "darwin" {
+		cmd := exec.Command("open", "-a", "Cursor", path)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Start()
+		return nil
+	}
+	return fmt.Errorf("no se encontró el comando \"cursor\" en PATH (instala la CLI de Cursor)")
+}
+
 func runShellLine(line string) error {
 	if runtime.GOOS == "windows" {
 		fmt.Fprintf(os.Stderr, "Ejecuta el comando a mano o usa -print-only. Comando:\n%s\n", line)
@@ -144,6 +164,28 @@ func runShellLine(line string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func runShellLineBackground(line string) error {
+	if runtime.GOOS == "windows" {
+		fmt.Fprintf(os.Stderr, "Ejecuta el comando a mano o usa -print-only. Comando:\n%s\n", line)
+		return nil
+	}
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+	shellPath, err := exec.LookPath(shell)
+	if err != nil {
+		shellPath = "/bin/sh"
+	}
+	cmd := exec.Command(shellPath, "-lc", line)
+	cmd.Env = os.Environ()
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Start()
+	return nil
 }
 
 func chdirAndExecShell(path string) error {

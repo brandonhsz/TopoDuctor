@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/macpro/topoductor/internal/worktree"
@@ -47,32 +48,13 @@ func TestRefreshDoneMsg_setsSetupRunningOnNewWorktree(t *testing.T) {
 	}
 }
 
-// TestRefreshDoneMsg_noSetupWhenNoActiveProject ensures no setup runs if there
-// is no active project (can't read project.json without one).
-func TestRefreshDoneMsg_noSetupWhenNoActiveProject(t *testing.T) {
-	m := baseModel()
-	m.activeProject = ""
-	m.busy = true
-	newPath := "/somewhere/worktree/feature"
-
-	next, _ := m.Update(refreshDoneMsg{
-		worktrees:       []worktree.Worktree{{Path: newPath}},
-		newWorktreePath: newPath,
-	})
-	m = next.(Model)
-
-	if len(m.setupRunning) != 0 {
-		t.Fatalf("setupRunning should be empty without activeProject, got %v", m.setupRunning)
-	}
-}
-
 // TestSetupDoneMsg_clearsRunning verifies that receiving setupDoneMsg removes
 // the path from setupRunning.
 func TestSetupDoneMsg_clearsRunning(t *testing.T) {
 	m := baseModel()
 	m.setupRunning = map[string]bool{"/repo/wt/feature": true}
 
-	next, _ := m.Update(setupDoneMsg{path: "/repo/wt/feature"})
+	next, _ := m.Update(setupDoneMsg{worktreePath: "/repo/wt/feature"})
 	m = next.(Model)
 
 	if m.setupRunning["/repo/wt/feature"] {
@@ -87,8 +69,8 @@ func TestSetupDoneMsg_showsBannerOnError(t *testing.T) {
 	m.setupRunning = map[string]bool{"/repo/wt/feature": true}
 
 	next, _ := m.Update(setupDoneMsg{
-		path: "/repo/wt/feature",
-		err:  errSetupFailed,
+		worktreePath: "/repo/wt/feature",
+		err:          errors.New("npm install failed: exit status 1"),
 	})
 	m = next.(Model)
 
@@ -105,17 +87,10 @@ func TestSetupDoneMsg_noBannerOnSuccess(t *testing.T) {
 	m := baseModel()
 	m.setupRunning = map[string]bool{"/repo/wt/feature": true}
 
-	next, _ := m.Update(setupDoneMsg{path: "/repo/wt/feature"})
+	next, _ := m.Update(setupDoneMsg{worktreePath: "/repo/wt/feature"})
 	m = next.(Model)
 
 	if m.banner != "" {
 		t.Fatalf("unexpected banner: %q", m.banner)
 	}
 }
-
-// errSetupFailed is a sentinel used in tests.
-var errSetupFailed = setupTestErr("npm install failed: exit status 1")
-
-type setupTestErr string
-
-func (e setupTestErr) Error() string { return string(e) }

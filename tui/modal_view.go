@@ -15,7 +15,7 @@ import (
 // modalMenuOpen is true when a menu is shown as a floating modal (not the main list grid).
 func (m Model) modalMenuOpen() bool {
 	switch m.mode {
-	case modeProjectPicker, modeAddProjectPath, modeBranchPrefs, modeExitAction, modeCreate, modeRename, modeDeleteConfirm, modeArchiveScriptConfirm, modeProjectScripts, modeScriptRun:
+	case modeProjectPicker, modeAddProjectPath, modeBranchPrefs, modeExitAction, modeCreate, modeRename, modeDeleteConfirm, modeArchiveScriptConfirm, modeProjectScripts, modeScriptRun, modeArchiveList:
 		return true
 	default:
 		return false
@@ -214,18 +214,21 @@ func (m Model) renderActiveModal() string {
 			sb.WriteString(m.styles.Error.Render(m.scriptEditLoadErr))
 			sb.WriteString("\n\n")
 		}
-		labels := []string{"scripts.setup (i)", "scripts.run (g)", "scripts.archive (z)"}
+		labels := []string{"scripts.setup (i)", "scripts.run (ctrl+r)", "scripts.archive (z)"}
 		for i := 0; i < 3; i++ {
 			sb.WriteString(m.styles.Prompt.Render(labels[i]))
 			sb.WriteString("\n")
 			sb.WriteString(m.scriptEditInputs[i].View())
 			sb.WriteString("\n")
 		}
-		sb.WriteString(m.styles.Muted.Render("tab campo · enter guardar · esc volver · en la lista: i / g / z ejecutan en la tarjeta activa"))
+		sb.WriteString(m.styles.Muted.Render("tab campo · enter guardar · esc volver · en la lista: i / ctrl+r / z ejecutan en la tarjeta activa"))
 		return m.wrapModal("Scripts del proyecto", sb.String())
 
 	case modeScriptRun:
 		return m.wrapModal("Ejecutar script — "+m.scriptRunTitle, m.renderScriptRunBody())
+
+	case modeArchiveList:
+		return m.renderArchiveListModal()
 
 	default:
 		return ""
