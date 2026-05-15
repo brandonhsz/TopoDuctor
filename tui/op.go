@@ -10,9 +10,17 @@ import (
 )
 
 // refreshDoneMsg follows a list reload (after create / rename / remove).
+// newWorktreePath is non-empty after a successful creation — triggers setup.
 type refreshDoneMsg struct {
-	worktrees []worktree.Worktree
-	err       error
+	worktrees       []worktree.Worktree
+	err             error
+	newWorktreePath string
+}
+
+// setupDoneMsg is sent when the background setup script finishes.
+type setupDoneMsg struct {
+	path string
+	err  error
 }
 
 // branchesLoadedMsg entrega el listado de ramas para el selector al crear worktree.
@@ -51,6 +59,45 @@ func addWorktreeCmd(svc worktree.Service, baseRef, label string) tea.Cmd {
 			return refreshDoneMsg{err: err}
 		}
 		return refreshDoneMsg{worktrees: gw}
+	}
+}
+
+// addWorktreeWithSetupCmd creates the worktree and identifies the new path so
+// the caller can trigger the setup script.
+func addWorktreeWithSetupCmd(svc worktree.Service, baseRef, label string) tea.Cmd {
+	return func() tea.Msg {
+		before, _ := svc.List()
+		beforeSet := make(map[string]bool, len(before))
+		for _, wt := range before {
+			beforeSet[wt.Path] = true
+		}
+		if err := svc.AddUserWorktree(baseRef, label); err != nil {
+			return refreshDoneMsg{err: err}
+		}
+		gw, err := svc.List()
+		if err != nil {
+			return refreshDoneMsg{err: err}
+		}
+		var newPath string
+		for _, wt := range gw {
+			if !beforeSet[wt.Path] {
+				newPath = wt.Path
+				break
+			}
+		}
+		return refreshDoneMsg{worktrees: gw, newWorktreePath: newPath}
+	}
+}
+
+// runSetupCmd reads the project's setup script and runs it inside worktreePath.
+func runSetupCmd(activeProject, worktreePath string) tea.Cmd {
+	return func() tea.Msg {
+		sc, err := projects.ReadProjectConfig(activeProject)
+		if err != nil || strings.TrimSpace(sc.Setup) == "" {
+			return setupDoneMsg{path: worktreePath}
+		}
+		runErr := projects.RunScriptInDir(worktreePath, sc.Setup)
+		return setupDoneMsg{path: worktreePath, err: runErr}
 	}
 }
 

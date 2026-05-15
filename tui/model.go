@@ -101,6 +101,7 @@ type Model struct {
 	scriptRunOutput     string
 	scriptRunErr        string
 	scriptRunScroll     int
+	setupRunning        map[string]bool
 }
 
 // withSettingsOpened abre Configuración y limpia el estado del chequeo de versiones.
@@ -197,7 +198,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = modeList
 		syncSelectedPath(&m)
 		m.marqueeTick = 0
+		if msg.newWorktreePath != "" && m.activeProject != "" {
+			if m.setupRunning == nil {
+				m.setupRunning = make(map[string]bool)
+			}
+			m.setupRunning[msg.newWorktreePath] = true
+			return m, tea.Batch(m.marqueeCmd(), runSetupCmd(m.activeProject, msg.newWorktreePath))
+		}
 		return m, m.marqueeCmd()
+
+	case setupDoneMsg:
+		if m.setupRunning != nil {
+			delete(m.setupRunning, msg.path)
+		}
+		if msg.err != nil {
+			m.banner = "setup: " + msg.err.Error()
+		}
+		return m, nil
 
 	case branchesLoadedMsg:
 		m.createBranchesLoading = false
@@ -574,7 +591,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.createStep = 0
 				m.createBaseRef = ""
 				m.resetCreateBranchState()
-				return m, addWorktreeCmd(m.svc, base, v)
+				return m, addWorktreeWithSetupCmd(m.svc, base, v)
 			}
 			var cmd tea.Cmd
 			m.nameInput, cmd = m.nameInput.Update(msg)
@@ -1025,7 +1042,11 @@ func (m Model) renderWTCard(wt worktree.Worktree, selected bool) string {
 	br := m.cardBranchText(wt, selected)
 	title := m.styles.CardTitle.Render(name)
 	sub := m.styles.CardSub.Render("↳ " + br)
-	inner := lipgloss.JoinVertical(lipgloss.Left, title, sub)
+	lines := []string{title, sub}
+	if m.setupRunning[wt.Path] {
+		lines = append(lines, m.styles.CardSub.Render("⚡ setup..."))
+	}
+	inner := lipgloss.JoinVertical(lipgloss.Left, lines...)
 	inner = lipgloss.NewStyle().Width(22).Render(inner)
 
 	var frame lipgloss.Style
