@@ -12,6 +12,7 @@ import (
 )
 
 // refreshDoneMsg follows a list reload (after create / rename / remove).
+// newWorktreePath is non-empty after a successful creation — triggers setup.
 type refreshDoneMsg struct {
 	worktrees       []worktree.Worktree
 	err             error
@@ -188,5 +189,3 @@ func addWorktreeWithSetupCmd(svc worktree.Service, baseRef, label string, setupD
 		return refreshDoneMsg{worktrees: gw, newWorktreePath: newPath, statusesUpdated: worktreeStatuses}
 	}
 }
-
-// branchesLoadedMsg entrega el listado de ramas para el selector al crear worktree.
